@@ -5,12 +5,13 @@ FROM public.ecr.aws/docker/library/node:22.20.0-bookworm-slim@sha256:b21fe589dfb
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 
-RUN corepack enable
+RUN corepack enable \
+  && corepack install --global pnpm@10.19.0
 WORKDIR /app
 
 FROM base AS manifests
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/ingestion-worker/package.json apps/ingestion-worker/package.json
 COPY apps/analysis-worker/package.json apps/analysis-worker/package.json
@@ -20,26 +21,21 @@ COPY packages/messaging/package.json packages/messaging/package.json
 
 FROM manifests AS build
 
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store,sharing=locked pnpm fetch
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store,sharing=locked \
-  pnpm install --offline --frozen-lockfile
+RUN pnpm install --frozen-lockfile
 
 COPY apps/api apps/api
 COPY apps/ingestion-worker apps/ingestion-worker
 COPY apps/analysis-worker apps/analysis-worker
 COPY packages packages
 
-RUN --mount=type=cache,id=turbo-cache,target=/app/.turbo,sharing=locked \
-  pnpm --filter @copilot/api... \
-    --filter @copilot/ingestion-worker... \
-    --filter @copilot/analysis-worker... \
-    build
+RUN pnpm --filter @copilot/api... \
+  --filter @copilot/ingestion-worker... \
+  --filter @copilot/analysis-worker... \
+  build
 
-FROM manifests AS production-dependencies
+FROM build AS production-dependencies
 
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store,sharing=locked pnpm fetch --prod
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store,sharing=locked \
-  pnpm install --prod --offline --frozen-lockfile
+RUN CI=true pnpm install --prod --offline --frozen-lockfile
 
 FROM public.ecr.aws/docker/library/node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS runtime
 

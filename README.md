@@ -81,12 +81,10 @@ gateway rather than a developer's interactive subscription.
 | `pnpm db:studio`                                           | Open Drizzle Studio                                                 |
 | `pnpm --filter @copilot/api sync:location -- <locationId>` | Queue a convergent historical sync for one OAuth-installed Location |
 
-AWS releases are deliberately separated by change type. `infra` changes only
-CloudFormation, `backend` publishes and rolls out an immutable backend image,
-`backend-migrate` first snapshots and drains the database, `frontend` publishes
-only static assets, and `config <process>` restarts only the affected runtime.
-See [the AWS runbook](infra/aws/README.md) for the exact commands and rollback
-boundaries.
+AWS releases are separated by change type. `infra` changes only CloudFormation,
+`backend` builds one immutable image and updates the Docker Compose application,
+`frontend` publishes only static assets, and `config <process>` recreates only the
+affected container. See [the AWS runbook](infra/aws/README.md) for the exact commands.
 
 ## Documentation
 
@@ -100,8 +98,8 @@ boundaries.
 - OAuth tokens are encrypted at rest with AES-256-GCM and rotated on refresh.
 - Webhook signatures are verified before any event is accepted.
 - Queue messages contain internal identifiers, not transcripts or credentials.
-- The public ALB accepts network traffic only from CloudFront and forwards requests
-  only when they carry the distribution's generated origin-verification header.
+- The public ALB accepts network traffic only from CloudFront's AWS-managed origin
+  network.
 - Production dashboard authorization comes from signed HighLevel user context;
   a caller-supplied `locationId` is never an authorization boundary.
 - Semantic analysis redacts common contact data and excludes raw action

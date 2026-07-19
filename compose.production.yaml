@@ -1,0 +1,52 @@
+name: voice-ai-observability
+
+x-runtime: &runtime
+  image: ${IMAGE:?IMAGE is required}
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  stop_grace_period: 60s
+  logging:
+    driver: awslogs
+    options:
+      awslogs-region: ${AWS_REGION:?AWS_REGION is required}
+      awslogs-group: ${LOG_GROUP_NAME:?LOG_GROUP_NAME is required}
+
+services:
+  api:
+    <<: *runtime
+    command: [node, apps/api/dist/main.js]
+    env_file: ${API_ENV_FILE:-/etc/voice-ai-observability/api.env}
+    ports:
+      - 3000:3000
+    mem_limit: 512m
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:3000/api/health/ready')
+          .then(response => { if (!response.ok) process.exit(1) })
+          .catch(() => process.exit(1))
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  ingestion:
+    <<: *runtime
+    command: [node, apps/ingestion-worker/dist/main.js]
+    env_file: ${INGESTION_ENV_FILE:-/etc/voice-ai-observability/ingestion-worker.env}
+    mem_limit: 384m
+
+  analysis:
+    <<: *runtime
+    command: [node, apps/analysis-worker/dist/main.js]
+    env_file: ${ANALYSIS_ENV_FILE:-/etc/voice-ai-observability/analysis-worker.env}
+    mem_limit: 768m

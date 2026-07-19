@@ -49,14 +49,16 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          load: true
-          tags: voice-ai-observability:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Validate production Compose file
+        env:
+          IMAGE: example.invalid/voice-ai-observability:ci
+          AWS_REGION: us-east-1
+          LOG_GROUP_NAME: /voice-ai-observability/application
+          API_ENV_FILE: .env.example
+          INGESTION_ENV_FILE: .env.example
+          ANALYSIS_ENV_FILE: .env.example
+        run: docker compose --file compose.production.yaml config --quiet
+      - run: docker build --tag voice-ai-observability:ci .
       - name: Verify production runtime
         run: |
           test "$(docker image inspect voice-ai-observability:ci --format '{{.Config.User}}')" = node

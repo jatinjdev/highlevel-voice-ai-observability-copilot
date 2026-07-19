@@ -23,24 +23,16 @@ usage() {
 Usage: bash infra/aws/deploy.sh <command> [target]
 
 Commands:
-  infra                 Update CloudFormation only.
-  backend               Build and release backend code without a migration.
-  backend-migrate       Snapshot RDS, migrate while drained, then release backend code.
-  frontend              Build and publish the Vue application only.
-  config <target>       Update runtime configuration and restart api, ingestion,
-                        analysis, or all. The default target is all.
-  all                   Run checks, infra, config, migration-safe backend release,
-                        and frontend publication.
+  infra             Update CloudFormation only.
+  backend           Build the backend image, migrate, and update the containers.
+  frontend          Build and publish the Vue application only.
+  config <target>   Update configuration and recreate api, ingestion, analysis, or all.
+  all               Run checks and deploy infrastructure, configuration, backend, and frontend.
 USAGE
 }
 
-if [[ -z "$COMMAND" ]]; then
-  usage
-  exit 2
-fi
-
 case "$COMMAND" in
-  infra | backend | backend-migrate | frontend | config | all) ;;
+  infra | backend | frontend | config | all) ;;
   *) usage; exit 2 ;;
 esac
 case "$CONFIG_TARGET" in
@@ -60,6 +52,20 @@ aws_cli() {
 }
 
 aws_cli sts get-caller-identity >/dev/null
+
+ensure_release_tools() {
+  for executable in docker git pnpm; do
+    command -v "$executable" >/dev/null || {
+      echo "Missing required command: $executable" >&2
+      exit 1
+    }
+  done
+}
+
+run_checks() {
+  pnpm format:check
+  pnpm check
+}
 
 deploy_infrastructure() {
   local cloudfront_prefix_list
@@ -106,20 +112,6 @@ require_output() {
   printf '%s' "$value"
 }
 
-ensure_release_tools() {
-  for executable in docker pnpm git; do
-    command -v "$executable" >/dev/null || {
-      echo "Missing required command: $executable" >&2
-      exit 1
-    }
-  done
-}
-
-run_checks() {
-  pnpm format:check
-  pnpm check
-}
-
 update_application_configuration() {
   if [[ ! -f "$ENV_FILE" ]]; then
     echo "Missing configuration file: $ENV_FILE" >&2
@@ -148,19 +140,18 @@ build_backend_image() {
   ensure_release_tools
   if [[ "${SKIP_CHECKS:-false}" != true ]]; then run_checks; fi
 
-  local repository_uri cache_repository_uri repository_name account_id commit image_tag
-  local existing_digest metadata_file image_reference
+  local repository_uri repository_name account_id commit image_tag existing_digest
   repository_uri="$(require_output ApplicationRepositoryUri)"
-  cache_repository_uri="$(require_output ApplicationBuildCacheRepositoryUri)"
   repository_name="${repository_uri##*/}"
   account_id="$(aws_cli sts get-caller-identity --query Account --output text)"
   commit="$(git rev-parse --verify HEAD)"
 
   if [[ -n "$(git status --porcelain)" && "${ALLOW_DIRTY_BUILD:-false}" != true ]]; then
-    echo 'Refusing to publish an image from a dirty working tree. Commit the release or set ALLOW_DIRTY_BUILD=true explicitly.' >&2
+    echo 'Refusing to publish an image from a dirty working tree. Commit it or set ALLOW_DIRTY_BUILD=true explicitly.' >&2
     exit 1
   fi
   image_tag="${IMAGE_TAG:-${commit:0:12}}"
+  BACKEND_IMAGE="$repository_uri:$image_tag"
 
   aws_cli ecr get-login-password |
     docker login --username AWS --password-stdin "$account_id.dkr.ecr.$REGION.amazonaws.com"
@@ -171,33 +162,12 @@ build_backend_image() {
     --output text 2>/dev/null || true)"
 
   if [[ -n "$existing_digest" && "$existing_digest" != None ]]; then
-    image_reference="$repository_uri@$existing_digest"
-    printf 'Reusing immutable image %s.\n' "$image_reference"
-  else
-    metadata_file="$(mktemp)"
-    TEMP_FILES+=("$metadata_file")
-    docker buildx build \
-      --platform linux/amd64 \
-      --push \
-      --tag "$repository_uri:$image_tag" \
-      --label "org.opencontainers.image.revision=$commit" \
-      --label "org.opencontainers.image.source=https://github.com/jatinjdev/highlevel-voice-ai-observability-copilot" \
-      --cache-from "type=registry,ref=$cache_repository_uri:buildcache" \
-      --cache-to "type=registry,ref=$cache_repository_uri:buildcache,mode=max,image-manifest=true,oci-mediatypes=true" \
-      --provenance=mode=max \
-      --sbom=true \
-      --metadata-file "$metadata_file" \
-      .
-    existing_digest="$(jq -r '."containerimage.digest"' "$metadata_file")"
-    image_reference="$repository_uri@$existing_digest"
+    printf 'Reusing immutable image %s.\n' "$BACKEND_IMAGE"
+    return
   fi
 
-  aws_cli ssm put-parameter \
-    --name "$(require_output RuntimeImageParameterName)" \
-    --type String \
-    --value "$image_reference" \
-    --overwrite >/dev/null
-  printf 'Published runtime image %s.\n' "$image_reference"
+  docker build --platform linux/amd64 --tag "$BACKEND_IMAGE" .
+  docker push "$BACKEND_IMAGE"
 }
 
 write_remote_configuration() {
@@ -209,7 +179,6 @@ write_remote_configuration() {
     printf 'DATABASE_SECRET_ARN=%q\n' "$(require_output DatabaseSecretArn)"
     printf 'DATABASE_HOST=%q\n' "$(require_output DatabaseEndpoint)"
     printf 'DATABASE_PORT=%q\n' 5432
-    printf 'RUNTIME_IMAGE_PARAMETER=%q\n' "$(require_output RuntimeImageParameterName)"
     printf 'INGESTION_QUEUE_URL=%q\n' "$(require_output IngestionQueueUrl)"
     printf 'ANALYSIS_QUEUE_URL=%q\n' "$(require_output AnalysisQueueUrl)"
     printf 'LOG_GROUP_NAME=%q\n' "$(require_output ApplicationLogGroupName)"
@@ -218,25 +187,33 @@ write_remote_configuration() {
 
 run_on_runtime_host() {
   local mode="$1"
-  local instance_id script_payload config_file config_payload parameters command_id status
+  local target="$2"
+  local image="${3:-}"
+  local instance_id script_payload compose_payload config_file config_payload parameters command_id status
   instance_id="$(require_output ApplicationInstanceId)"
   config_file="$(mktemp)"
   parameters="$(mktemp)"
   TEMP_FILES+=("$config_file" "$parameters")
   write_remote_configuration "$config_file"
   script_payload="$(base64 <infra/aws/runtime-deploy.sh | tr -d '\n')"
+  compose_payload="$(base64 <compose.production.yaml | tr -d '\n')"
   config_payload="$(base64 <"$config_file" | tr -d '\n')"
+
   jq -n \
     --arg script "$script_payload" \
+    --arg compose "$compose_payload" \
     --arg config "$config_payload" \
     --arg mode "$mode" \
+    --arg target "$target" \
+    --arg image "$image" \
     '{commands: [
-      "sudo install -d -m 700 /etc/voice-ai-observability",
+      "sudo install -d -m 700 /etc/voice-ai-observability /opt/voice-ai-observability",
       ("printf %s " + ($script | @sh) + " | base64 -d | sudo tee /usr/local/bin/deploy-voice-agent >/dev/null"),
       "sudo chmod 700 /usr/local/bin/deploy-voice-agent",
+      ("printf %s " + ($compose | @sh) + " | base64 -d | sudo tee /opt/voice-ai-observability/compose.yaml >/dev/null"),
       ("printf %s " + ($config | @sh) + " | base64 -d | sudo tee /etc/voice-ai-observability/deployment.env >/dev/null"),
       "sudo chmod 600 /etc/voice-ai-observability/deployment.env",
-      ("sudo /usr/local/bin/deploy-voice-agent " + ($mode | @sh))
+      ("sudo " + (if ($image | length) > 0 then "IMAGE=" + ($image | @sh) + " " else "" end) + "/usr/local/bin/deploy-voice-agent " + ($mode | @sh) + " " + ($target | @sh))
     ]}' >"$parameters"
 
   command_id="$(aws_cli ssm send-command \
@@ -268,17 +245,6 @@ run_on_runtime_host() {
   fi
 }
 
-snapshot_database() {
-  local database_identifier snapshot_identifier
-  database_identifier="$(require_output DatabaseIdentifier)"
-  snapshot_identifier="${PROJECT_NAME}-predeploy-$(date -u +%Y%m%d%H%M%S)"
-  aws_cli rds create-db-snapshot \
-    --db-instance-identifier "$database_identifier" \
-    --db-snapshot-identifier "$snapshot_identifier" >/dev/null
-  aws_cli rds wait db-snapshot-available --db-snapshot-identifier "$snapshot_identifier"
-  printf 'Created pre-migration snapshot %s.\n' "$snapshot_identifier"
-}
-
 deploy_frontend() {
   ensure_release_tools
   local bucket distribution
@@ -298,14 +264,8 @@ deploy_frontend() {
 }
 
 release_backend() {
-  local migration_mode="$1"
   build_backend_image
-  if [[ "$migration_mode" == true ]]; then
-    snapshot_database
-    run_on_runtime_host release-migrate
-  else
-    run_on_runtime_host release
-  fi
+  run_on_runtime_host deploy all "$BACKEND_IMAGE"
   curl --fail --retry 18 --retry-delay 10 \
     "https://$(require_output CloudFrontDomain)/api/health/ready"
 }
@@ -316,11 +276,7 @@ case "$COMMAND" in
     ;;
   backend)
     load_stack_outputs
-    release_backend false
-    ;;
-  backend-migrate)
-    load_stack_outputs
-    release_backend true
+    release_backend
     ;;
   frontend)
     load_stack_outputs
@@ -329,16 +285,16 @@ case "$COMMAND" in
   config)
     load_stack_outputs
     update_application_configuration
-    run_on_runtime_host "restart-$CONFIG_TARGET"
+    run_on_runtime_host config "$CONFIG_TARGET"
     ;;
   all)
     ensure_release_tools
-    if [[ "${SKIP_CHECKS:-false}" != true ]]; then run_checks; fi
+    run_checks
     export SKIP_CHECKS=true
     deploy_infrastructure
     load_stack_outputs
     update_application_configuration
-    release_backend true
+    release_backend
     deploy_frontend
     ;;
 esac

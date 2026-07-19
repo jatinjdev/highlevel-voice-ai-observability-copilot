@@ -254,50 +254,12 @@ Resources:
             ]
           }
 
-  ApplicationBuildCacheRepository:
-    Type: AWS::ECR::Repository
-    DeletionPolicy: Delete
-    UpdateReplacePolicy: Delete
-    Properties:
-      RepositoryName: !Sub ${ProjectName}-build-cache
-      ImageTagMutability: MUTABLE
-      EncryptionConfiguration:
-        EncryptionType: AES256
-      LifecyclePolicy:
-        LifecyclePolicyText: |
-          {
-            "rules": [
-              {
-                "rulePriority": 1,
-                "description": "Keep only the current BuildKit cache",
-                "selection": {
-                  "tagStatus": "untagged",
-                  "countType": "sinceImagePushed",
-                  "countUnit": "days",
-                  "countNumber": 1
-                },
-                "action": { "type": "expire" }
-              }
-            ]
-          }
-
   ApplicationSecret:
     Type: AWS::SecretsManager::Secret
     Properties:
       Name: !Sub ${ProjectName}/application
       Description: Runtime-only HighLevel and language-model configuration
       SecretString: '{}'
-
-  OriginVerificationSecret:
-    Type: AWS::SecretsManager::Secret
-    Properties:
-      Name: !Sub ${ProjectName}/cloudfront-origin
-      Description: Shared header used only to authenticate this CloudFront distribution to the ALB
-      GenerateSecretString:
-        SecretStringTemplate: '{}'
-        GenerateStringKey: token
-        PasswordLength: 48
-        ExcludePunctuation: true
 
   ApplicationLogGroup:
     Type: AWS::Logs::LogGroup
@@ -337,10 +299,6 @@ Resources:
                 Resource:
                   - !Ref ApplicationSecret
                   - !GetAtt Database.MasterUserSecret.SecretArn
-              - Effect: Allow
-                Action:
-                  - ssm:GetParameter
-                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectName}/runtime/image
               - Effect: Allow
                 Action:
                   - ecr:GetAuthorizationToken
@@ -387,8 +345,21 @@ Resources:
         Fn::Base64: |
           #!/bin/bash
           set -euo pipefail
-          dnf install -y docker jq python3
+          dnf install -y docker jq python3 curl
           systemctl enable --now docker
+          COMPOSE_VERSION=v2.40.3
+          COMPOSE_DIR=/usr/local/lib/docker/cli-plugins
+          install -d "$COMPOSE_DIR"
+          curl --fail --silent --show-error --location \
+            "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64" \
+            --output "$COMPOSE_DIR/docker-compose-linux-x86_64"
+          curl --fail --silent --show-error --location \
+            "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64.sha256" \
+            --output "$COMPOSE_DIR/docker-compose-linux-x86_64.sha256"
+          cd "$COMPOSE_DIR"
+          sha256sum --check docker-compose-linux-x86_64.sha256
+          mv docker-compose-linux-x86_64 docker-compose
+          chmod 755 docker-compose
       SubnetId: !Ref PublicSubnetA
       Tags:
         - Key: Name
@@ -432,24 +403,6 @@ Resources:
       Port: 80
       Protocol: HTTP
       DefaultActions:
-        - Type: fixed-response
-          FixedResponseConfig:
-            StatusCode: '403'
-            ContentType: text/plain
-            MessageBody: Forbidden
-
-  ApplicationListenerRule:
-    Type: AWS::ElasticLoadBalancingV2::ListenerRule
-    Properties:
-      ListenerArn: !Ref ApplicationListener
-      Priority: 1
-      Conditions:
-        - Field: http-header
-          HttpHeaderConfig:
-            HttpHeaderName: X-Origin-Verify
-            Values:
-              - !Sub '{{resolve:secretsmanager:${OriginVerificationSecret}:SecretString:token}}'
-      Actions:
         - Type: forward
           TargetGroupArn: !Ref ApplicationTargetGroup
 
@@ -532,9 +485,6 @@ Resources:
             S3OriginConfig: {}
           - Id: application-alb
             DomainName: !GetAtt ApplicationLoadBalancer.DNSName
-            OriginCustomHeaders:
-              - HeaderName: X-Origin-Verify
-                HeaderValue: !Sub '{{resolve:secretsmanager:${OriginVerificationSecret}:SecretString:token}}'
             CustomOriginConfig:
               HTTPPort: 80
               OriginProtocolPolicy: http-only
@@ -678,20 +628,14 @@ Outputs:
     Value: !Ref ApplicationInstance
   ApplicationRepositoryUri:
     Value: !GetAtt ApplicationRepository.RepositoryUri
-  ApplicationBuildCacheRepositoryUri:
-    Value: !GetAtt ApplicationBuildCacheRepository.RepositoryUri
   ApplicationSecretArn:
     Value: !Ref ApplicationSecret
   ApplicationLogGroupName:
     Value: !Ref ApplicationLogGroup
   DatabaseEndpoint:
     Value: !GetAtt Database.Endpoint.Address
-  DatabaseIdentifier:
-    Value: !Ref Database
   DatabaseSecretArn:
     Value: !GetAtt Database.MasterUserSecret.SecretArn
-  RuntimeImageParameterName:
-    Value: !Sub /${ProjectName}/runtime/image
   IngestionQueueUrl:
     Value: !Ref IngestionQueue
   AnalysisQueueUrl:

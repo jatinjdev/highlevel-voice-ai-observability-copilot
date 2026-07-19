@@ -26,9 +26,9 @@ be required before operating a large multi-customer fleet.
 - AWS CloudFormation for CloudFront/S3, CloudFront-restricted ALB ingress, an
   SSM-only EC2 host, private encrypted RDS, SQS/DLQs, ECR, Secrets Manager,
   CloudWatch logs and operational alarms.
-- Change-scoped releases, immutable image digests, registry build caching,
-  migration snapshots/draining, per-process configuration, readiness checks,
-  graceful container replacement, and rollback for schema-compatible releases.
+- Change-scoped releases, immutable commit-tagged images, ordinary Docker layer
+  caching, Docker Compose runtime management, per-process configuration,
+  readiness checks, and graceful container replacement.
 - Pull-request CI for formatting, lint, typecheck, tests, build, and the production
   container image.
 
