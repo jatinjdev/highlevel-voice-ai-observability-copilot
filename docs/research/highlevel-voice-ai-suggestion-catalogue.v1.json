@@ -1,0 +1,1126 @@
+{
+  "version": "2026-07-16.v1",
+  "tiers": {
+    "primary": {
+      "description": "Default first-line changes with a narrow blast radius and a direct connection to observed call behavior, primarily prompt and greeting changes."
+    },
+    "feature": {
+      "description": "Use or correct an existing HighLevel capability when prompt wording alone cannot supply data, execute an action, or complete an operational workflow."
+    },
+    "advanced": {
+      "description": "Speech, model, system-prompt, and other high-coupling settings that require stronger causal evidence and explicit testing before adoption."
+    }
+  },
+  "sources": {
+    "create-agent-ui": {
+      "title": "How to Create Voice AI Agents",
+      "url": "https://help.gohighlevel.com/support/solutions/articles/155000004107-creating-voice-ai-agents"
+    },
+    "patch-agent-api": {
+      "title": "Patch Voice AI Agent API",
+      "url": "https://marketplace.gohighlevel.com/docs/ghl/voice-ai/patch-agent/"
+    },
+    "oauth-scopes": {
+      "title": "HighLevel OAuth scopes",
+      "url": "https://marketplace.gohighlevel.com/docs/Authorization/Scopes/"
+    },
+    "actions-ui": {
+      "title": "Separate During-Call and Post-Call Actions",
+      "url": "https://help.gohighlevel.com/support/solutions/articles/155000005267-separate-during-call-and-post-call-actions-in-voice-ai"
+    },
+    "actions-api": {
+      "title": "Voice AI Actions API",
+      "url": "https://marketplace.gohighlevel.com/docs/ghl/voice-ai/actions/"
+    },
+    "agent-transfer": {
+      "title": "Voice AI Agent Transfer",
+      "url": "https://help.gohighlevel.com/support/solutions/articles/155000007796-voice-ai-agent-transfer"
+    },
+    "appointment-booking": {
+      "title": "Appointment Booking in Voice AI",
+      "url": "https://help.gohighlevel.com/support/solutions/articles/155000005293-appointment-booking-in-voice-ai"
+    },
+    "kb-integration": {
+      "title": "Knowledge Base Integration for Voice AI Agents",
+      "url": "https://help.gohighlevel.com/support/solutions/articles/155000005266-knowledge-base-integration-for-voice-ai-agents"
+    },
+    "kb-overview": {
+      "title": "Knowledge Base Overview",
+      "url": "https://help.gohighlevel.com/support/solutions/articles/155000007313-knowledge-base-overview"
+    },
+    "kb-documents": {
+      "title": "Knowledge Base Document and Rich-Text Support",
+      "url": "https://help.gohighlevel.com/support/solutions/articles/155000006671"
+    },
+    "idle-reminder": {
+      "title": "Voice AI Idle Reminder Timer",
+      "url": "https://help.gohighlevel.com/support/solutions/articles/155000005207-idle-reminder-timer"
+    },
+    "noise-backchannel": {
+      "title": "Voice AI Noise Cancellation and Backchanneling",
+      "url": "https://help.gohighlevel.com/support/solutions/articles/155000007002-voice-ai-noise-cancellation-backchanneling"
+    },
+    "translation": {
+      "title": "Voice AI Translation Service",
+      "url": "https://help.gohighlevel.com/support/solutions/articles/155000005797-voice-ai-translation-service-for-call-transcript-summary"
+    },
+    "voice-selection": {
+      "title": "Voice AI Voice Selection and Voice Models",
+      "url": "https://help.gohighlevel.com/support/solutions/articles/155000005874-how-to-edit-a-voice-ai-agents-voice"
+    },
+    "system-prompts": {
+      "title": "Exposed System Prompts for Voice AI Agents",
+      "url": "https://help.gohighlevel.com/support/solutions/articles/155000007215"
+    },
+    "performance-reports": {
+      "title": "Voice AI Performance Reports",
+      "url": "https://help.gohighlevel.com/support/solutions/articles/155000007984-voice-ai-performance-reports"
+    },
+    "outbound": {
+      "title": "Voice AI Outbound Calling",
+      "url": "https://help.gohighlevel.com/support/solutions/articles/155000006598-voice-ai-outbound-calling"
+    },
+    "prompt-optimizer": {
+      "title": "Voice AI Prompt Optimizer",
+      "url": "https://help.gohighlevel.com/support/solutions/articles/155000007781-voice-ai-prompt-optimizer"
+    },
+    "custom-values": {
+      "title": "Use Custom Values in Voice AI Prompts",
+      "url": "https://help.gohighlevel.com/support/solutions/articles/155000004690"
+    }
+  },
+  "suggestions": [
+    {
+      "id": "prompt.core-instructions",
+      "tier": "primary",
+      "category": "prompt",
+      "title": "Clarify the agent's role, flow, and success criteria",
+      "uiPath": "Build > Agent prompt",
+      "applicationMode": "api_or_manual_ui",
+      "api": {
+        "status": "documented_write",
+        "field": "agentPrompt",
+        "scope": "voice-ai-agents.write"
+      },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": ["current agent prompt", "quoted transcript evidence"],
+      "signals": [
+        "The agent skips an explicit requirement",
+        "The agent follows an ambiguous instruction in a harmful or unhelpful way",
+        "The call exposes a missing branch or fallback"
+      ],
+      "guardrails": [
+        "Propose an exact minimal diff",
+        "Preserve unrelated instructions and custom values",
+        "Do not solve missing knowledge or missing tools with invented prompt facts"
+      ],
+      "validation": [
+        "Run the failing scenario and at least one unaffected happy path",
+        "Review transcript, action use, and outcome before applying"
+      ],
+      "sourceIds": ["create-agent-ui", "patch-agent-api", "prompt-optimizer"]
+    },
+    {
+      "id": "prompt.action-trigger-instructions",
+      "tier": "primary",
+      "category": "prompt",
+      "title": "Clarify when and how an existing action should be used",
+      "uiPath": "Build > Agent prompt and Actions",
+      "applicationMode": "api_or_manual_ui",
+      "api": { "status": "partial", "field": "agentPrompt", "scope": "voice-ai-agents.write" },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": [
+        "configured action details",
+        "executed action evidence or a conclusive missed trigger",
+        "quoted transcript evidence"
+      ],
+      "signals": [
+        "A configured action is invoked under the wrong condition",
+        "The prompt omits the trigger or required preconditions",
+        "The agent announces an action but does not invoke it"
+      ],
+      "guardrails": [
+        "Never infer failure from an empty action list without knowing the action configuration",
+        "Separate prompt-trigger defects from action configuration or downstream execution failures"
+      ],
+      "validation": [
+        "Test positive, negative, and boundary trigger scenarios",
+        "Confirm the expected action ID and result"
+      ],
+      "sourceIds": ["create-agent-ui", "actions-ui", "actions-api", "prompt-optimizer"]
+    },
+    {
+      "id": "prompt.fallback-boundaries",
+      "tier": "primary",
+      "category": "prompt",
+      "title": "Add a safe fallback or explicit boundary",
+      "uiPath": "Build > Agent prompt",
+      "applicationMode": "api_or_manual_ui",
+      "api": {
+        "status": "documented_write",
+        "field": "agentPrompt",
+        "scope": "voice-ai-agents.write"
+      },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": [
+        "current agent prompt",
+        "quoted unsupported, unsafe, or fabricated response"
+      ],
+      "signals": [
+        "The agent invents business information",
+        "The agent does not know how to handle an unsupported request",
+        "The agent should escalate or collect a message instead of continuing"
+      ],
+      "guardrails": [
+        "Prefer a narrow condition and next step over a blanket refusal",
+        "Do not promise a handoff mechanism that is not configured"
+      ],
+      "validation": [
+        "Retest the original failure",
+        "Test a supported neighboring request to prevent over-refusal"
+      ],
+      "sourceIds": ["create-agent-ui", "patch-agent-api", "prompt-optimizer"]
+    },
+    {
+      "id": "greeting.inbound-outbound",
+      "tier": "primary",
+      "category": "greeting",
+      "title": "Correct or specialize the inbound/outbound greeting",
+      "uiPath": "Build > Welcome Message > Inbound or Outbound",
+      "applicationMode": "api_or_manual_ui",
+      "api": { "status": "partial", "field": "welcomeMessage", "scope": "voice-ai-agents.write" },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": ["call direction", "current greeting", "opening transcript or recording"],
+      "signals": [
+        "Wrong business or agent identity",
+        "Outbound purpose is not explained",
+        "Greeting language or tone conflicts with the configured audience"
+      ],
+      "guardrails": [
+        "Do not claim separate inbound/outbound API writes because the public API documents one welcomeMessage field",
+        "Preserve required disclosures"
+      ],
+      "validation": ["Run one inbound and one outbound opening test when both are used"],
+      "sourceIds": ["create-agent-ui", "patch-agent-api", "outbound"]
+    },
+    {
+      "id": "greeting.pause-before-speaking",
+      "tier": "primary",
+      "category": "greeting",
+      "title": "Adjust the pause before the greeting",
+      "uiPath": "Build > Welcome Message > Pause Before Speaking",
+      "applicationMode": "manual_ui_only",
+      "api": { "status": "undocumented", "field": null, "scope": null },
+      "evidencePolicy": "pattern_preferred",
+      "requiredEvidence": [
+        "call recording or timestamped audio events",
+        "current pause setting if available"
+      ],
+      "signals": [
+        "The greeting is clipped by call connection audio",
+        "Callers repeatedly speak over the opening",
+        "The opening delay is conspicuously long"
+      ],
+      "guardrails": [
+        "Never infer this from transcript text alone",
+        "Do not recommend a numeric value without audio evidence"
+      ],
+      "validation": ["Compare test calls at the current and proposed delay"],
+      "sourceIds": ["create-agent-ui"]
+    },
+    {
+      "id": "prompt.custom-values",
+      "tier": "primary",
+      "category": "prompt",
+      "title": "Use a HighLevel custom value for stable business-specific text",
+      "uiPath": "Build > Prompt or message field > Custom Value",
+      "applicationMode": "manual_ui_only",
+      "api": {
+        "status": "partial",
+        "field": "agentPrompt or welcomeMessage",
+        "scope": "voice-ai-agents.write"
+      },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": ["repeated hard-coded business data", "known HighLevel custom value"],
+      "signals": [
+        "The same mutable business detail is duplicated across prompts",
+        "A wrong location-specific value appears in a call"
+      ],
+      "guardrails": [
+        "Only reference an existing verified custom value",
+        "Do not put sensitive contact data into a static location value"
+      ],
+      "validation": ["Preview the resolved value and place a test call"],
+      "sourceIds": ["custom-values", "create-agent-ui"]
+    },
+    {
+      "id": "knowledge-base.attach-or-create",
+      "tier": "feature",
+      "category": "knowledge_base",
+      "title": "Create or attach a knowledge base",
+      "uiPath": "Build > Knowledge Base",
+      "applicationMode": "manual_ui_only",
+      "api": { "status": "partial", "field": null, "scope": null },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": [
+        "a legitimate factual question the agent could not answer",
+        "verification that the answer belongs in maintained business knowledge"
+      ],
+      "signals": [
+        "The prompt would need to embed substantial or frequently changing facts",
+        "The caller asks about policies, products, services, pricing, or documentation",
+        "The same knowledge need is likely to recur"
+      ],
+      "guardrails": [
+        "Do not recommend a knowledge base for conversational behavior rules",
+        "Voice AI supports one attached knowledge base per agent",
+        "Do not invent the missing source content"
+      ],
+      "validation": [
+        "Add a trusted source",
+        "Use the retrieval tester",
+        "Test the original customer-style question through the voice agent"
+      ],
+      "sourceIds": ["kb-integration", "kb-overview", "kb-documents"]
+    },
+    {
+      "id": "knowledge-base.content-gap",
+      "tier": "feature",
+      "category": "knowledge_base",
+      "title": "Add or correct knowledge-base content",
+      "uiPath": "AI Agents > Knowledge Base > Source tabs",
+      "applicationMode": "separate_public_api",
+      "api": { "status": "partial", "field": null, "scope": null },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": [
+        "attached knowledge-base identity",
+        "retrieved source or known absence",
+        "ground-truth answer"
+      ],
+      "signals": [
+        "The agent cannot find a documented answer",
+        "Retrieved content is stale, incomplete, or contradictory",
+        "A source omits a common synonym or customer phrasing"
+      ],
+      "guardrails": [
+        "Do not diagnose retrieval from transcript alone",
+        "Require a trusted source owner for factual changes",
+        "Remove duplicates rather than adding another conflicting copy"
+      ],
+      "validation": [
+        "Run the retrieval tester",
+        "Verify source attribution",
+        "Retest the failing call scenario"
+      ],
+      "sourceIds": ["kb-integration", "kb-overview", "kb-documents"]
+    },
+    {
+      "id": "knowledge-base.trigger-prompt",
+      "tier": "feature",
+      "category": "knowledge_base",
+      "title": "Refine when the agent queries its knowledge base",
+      "uiPath": "Build > Knowledge Base > When to use this knowledge base",
+      "applicationMode": "manual_ui_only",
+      "api": { "status": "undocumented", "field": null, "scope": null },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": [
+        "attached knowledge-base configuration",
+        "trigger prompt",
+        "tool invocation or retrieval evidence",
+        "quoted transcript"
+      ],
+      "signals": [
+        "The KB was not queried for an in-scope factual question",
+        "The KB was queried for an unrelated request",
+        "The trigger condition is vague or overlaps unrelated intents"
+      ],
+      "guardrails": [
+        "Do not rewrite KB content when the defect is trigger selection",
+        "Keep the trigger description specific and intent-based"
+      ],
+      "validation": [
+        "Test positive and negative trigger examples",
+        "Confirm retrieval occurs only for in-scope questions"
+      ],
+      "sourceIds": ["kb-integration", "prompt-optimizer"]
+    },
+    {
+      "id": "knowledge-base.source-quality",
+      "tier": "feature",
+      "category": "knowledge_base",
+      "title": "Clean up stale, duplicate, or poorly structured sources",
+      "uiPath": "AI Agents > Knowledge Base > Web Crawler, FAQ, Web Search, Tables, Rich Text, or File Upload",
+      "applicationMode": "separate_public_api",
+      "api": { "status": "partial", "field": null, "scope": null },
+      "evidencePolicy": "pattern_preferred",
+      "requiredEvidence": [
+        "retrieval results",
+        "source inventory",
+        "ground-truth source ownership"
+      ],
+      "signals": [
+        "Wrong sources repeatedly outrank the correct source",
+        "Multiple sources contradict one another",
+        "Image-only or unstructured documents omit searchable text",
+        "A structured table would better represent catalog or pricing data"
+      ],
+      "guardrails": [
+        "Do not delete sources automatically",
+        "Preserve source provenance and review ownership"
+      ],
+      "validation": [
+        "Run representative retrieval questions before and after cleanup",
+        "Confirm citations point to the intended source"
+      ],
+      "sourceIds": ["kb-overview", "kb-documents"]
+    },
+    {
+      "id": "action.call-transfer",
+      "tier": "feature",
+      "category": "action",
+      "title": "Add or correct a human call-transfer action",
+      "uiPath": "Build > Actions > During the Call > Call Transfer",
+      "applicationMode": "separate_public_api",
+      "api": { "status": "documented_write", "field": null, "scope": "voice-ai-agent-goals.write" },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": [
+        "clear transfer need",
+        "existing action inventory",
+        "destination and business escalation policy"
+      ],
+      "signals": [
+        "The caller explicitly requests a person",
+        "The agent reaches a high-risk or unsupported case requiring live help",
+        "Repeated routing requests belong to a known team"
+      ],
+      "guardrails": [
+        "Do not suggest a destination number or schedule that has not been verified",
+        "Distinguish transfer failure from a missing transfer capability"
+      ],
+      "validation": ["Test in-hours, out-of-hours, and unavailable-destination behavior"],
+      "sourceIds": ["actions-ui", "actions-api", "create-agent-ui"]
+    },
+    {
+      "id": "action.agent-transfer",
+      "tier": "feature",
+      "category": "action",
+      "title": "Route a specialized intent to another Voice AI agent",
+      "uiPath": "Build > Actions > Agent Transfer",
+      "applicationMode": "manual_ui_only",
+      "api": { "status": "undocumented", "field": null, "scope": null },
+      "evidencePolicy": "pattern_preferred",
+      "requiredEvidence": [
+        "distinct intent domain",
+        "available destination agent",
+        "handoff policy"
+      ],
+      "signals": [
+        "One agent prompt has become overloaded with unrelated specialties",
+        "Calls repeatedly require a specialized language, department, or workflow",
+        "A destination agent already owns the requested domain"
+      ],
+      "guardrails": [
+        "Do not fragment a simple flow unnecessarily",
+        "Validate that destination-agent working-hours behavior during chained transfer matches HighLevel rules"
+      ],
+      "validation": [
+        "Test routing conditions, handoff message, context continuity, and destination fallback"
+      ],
+      "sourceIds": ["agent-transfer"]
+    },
+    {
+      "id": "action.appointment-booking",
+      "tier": "feature",
+      "category": "action",
+      "title": "Add or correct appointment booking",
+      "uiPath": "Build > Actions > During the Call > Book Appointment",
+      "applicationMode": "separate_public_api",
+      "api": { "status": "documented_write", "field": null, "scope": "voice-ai-agent-goals.write" },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": [
+        "booking intent",
+        "eligible calendar configuration",
+        "executed action result if configured"
+      ],
+      "signals": [
+        "A qualified caller wants to schedule but receives only a promise of follow-up",
+        "The wrong calendar is selected",
+        "The agent offers unsuitable slots or misses required booking details"
+      ],
+      "guardrails": [
+        "Confirm calendar availability, buffers, minimum notice, conflicts, and fallback",
+        "Do not recommend Services because current Voice AI booking supports single or multiple calendars, not Services"
+      ],
+      "validation": [
+        "Use a test contact and calendar",
+        "Test booking, no-match, missing-email, and rejection paths"
+      ],
+      "sourceIds": ["actions-ui", "actions-api", "appointment-booking", "prompt-optimizer"]
+    },
+    {
+      "id": "action.workflow",
+      "tier": "feature",
+      "category": "action",
+      "title": "Trigger a workflow at the correct call event",
+      "uiPath": "Build > Actions or Post-Call > Workflow",
+      "applicationMode": "api_or_manual_ui",
+      "api": {
+        "status": "partial",
+        "field": "callEndWorkflowIds",
+        "scope": "voice-ai-agents.write or voice-ai-agent-goals.write"
+      },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": [
+        "business automation requirement",
+        "workflow identity",
+        "configured trigger timing",
+        "execution result when available"
+      ],
+      "signals": [
+        "A deterministic follow-up should occur after a qualifying call",
+        "The workflow runs during the wrong phase",
+        "A configured post-call workflow does not match the intended outcome"
+      ],
+      "guardrails": [
+        "Distinguish during-call actions from call-end workflows",
+        "Do not create or enable a workflow without reviewing its downstream effects"
+      ],
+      "validation": [
+        "Run with a test contact",
+        "Inspect workflow enrollment and downstream side effects"
+      ],
+      "sourceIds": ["actions-ui", "actions-api", "create-agent-ui", "patch-agent-api"]
+    },
+    {
+      "id": "action.sms",
+      "tier": "feature",
+      "category": "action",
+      "title": "Send an SMS when spoken information is insufficient",
+      "uiPath": "Build > Actions > During the Call > Send SMS",
+      "applicationMode": "separate_public_api",
+      "api": { "status": "documented_write", "field": null, "scope": "voice-ai-agent-goals.write" },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": [
+        "caller consent and reachable contact",
+        "configured message/action inventory",
+        "clear need for a link or written confirmation"
+      ],
+      "signals": [
+        "The caller needs a booking, payment, map, document, or other link",
+        "The agent repeatedly spells a long URL",
+        "A written confirmation would prevent misunderstanding"
+      ],
+      "guardrails": [
+        "Respect consent and messaging compliance",
+        "Do not send sensitive data or unverified links",
+        "Avoid duplicate sends"
+      ],
+      "validation": ["Test delivery to a test contact and verify exact message content"],
+      "sourceIds": ["actions-ui", "actions-api", "create-agent-ui"]
+    },
+    {
+      "id": "action.update-contact-fields",
+      "tier": "feature",
+      "category": "action",
+      "title": "Persist information collected during the call",
+      "uiPath": "Build > Actions > After the Call > Update Contact Fields",
+      "applicationMode": "separate_public_api",
+      "api": { "status": "documented_write", "field": null, "scope": "voice-ai-agent-goals.write" },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": [
+        "explicitly collected value",
+        "target contact field definition",
+        "action result if configured"
+      ],
+      "signals": [
+        "The agent collects useful qualification or support data that is lost after the call",
+        "A wrong field is updated",
+        "Required data is collected but absent from the CRM"
+      ],
+      "guardrails": [
+        "Map values to verified field semantics",
+        "Do not infer or store sensitive attributes",
+        "Keep unknown or refused answers distinct from empty values"
+      ],
+      "validation": ["Use a test contact and inspect the resulting field values"],
+      "sourceIds": ["actions-ui", "actions-api", "create-agent-ui"]
+    },
+    {
+      "id": "action.custom-or-mcp",
+      "tier": "feature",
+      "category": "action",
+      "title": "Use a custom action or MCP tool for an external capability",
+      "uiPath": "Build > Actions > Custom Action or Add MCP",
+      "applicationMode": "separate_public_api",
+      "api": { "status": "partial", "field": null, "scope": "voice-ai-agent-goals.write" },
+      "evidencePolicy": "pattern_preferred",
+      "requiredEvidence": [
+        "well-defined external operation",
+        "authentication and failure contract",
+        "business approval"
+      ],
+      "signals": [
+        "The required operation cannot be completed by native Voice AI actions",
+        "Callers repeatedly need a safe lookup or transaction in an external system"
+      ],
+      "guardrails": [
+        "Prefer native actions when available",
+        "Require strict input schemas, least privilege, idempotency, timeouts, and safe failure messaging",
+        "Never propose an arbitrary external call from transcript text alone"
+      ],
+      "validation": [
+        "Test success, timeout, invalid input, duplicate invocation, and downstream rejection"
+      ],
+      "sourceIds": ["create-agent-ui", "actions-ui", "actions-api", "prompt-optimizer"]
+    },
+    {
+      "id": "call.idle-reminder",
+      "tier": "feature",
+      "category": "call_settings",
+      "title": "Adjust the idle reminder behavior",
+      "uiPath": "Build > Call Settings > Idle Reminder Timer",
+      "applicationMode": "api_or_manual_ui",
+      "api": {
+        "status": "documented_write",
+        "field": "sendUserIdleReminders and reminderAfterIdleTimeSeconds",
+        "scope": "voice-ai-agents.write"
+      },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": [
+        "current idle reminder configuration",
+        "recording or reliable silence timing"
+      ],
+      "signals": [
+        "The reminder interrupts normal thinking time",
+        "Long silence makes callers think the call disconnected",
+        "The call ends after an ill-timed silence reminder"
+      ],
+      "guardrails": [
+        "Use the documented 1-20 second range",
+        "Do not infer silence timing from transcript lines without timestamps or audio",
+        "Coordinate with backchannel frequency"
+      ],
+      "validation": ["Test a deliberate pause before and after the proposed threshold"],
+      "sourceIds": ["idle-reminder", "patch-agent-api", "noise-backchannel"]
+    },
+    {
+      "id": "call.maximum-duration",
+      "tier": "feature",
+      "category": "call_settings",
+      "title": "Adjust maximum call duration",
+      "uiPath": "Build > Call Settings > Maximum Call Duration",
+      "applicationMode": "api_or_manual_ui",
+      "api": {
+        "status": "documented_write",
+        "field": "maxCallDuration",
+        "scope": "voice-ai-agents.write"
+      },
+      "evidencePolicy": "pattern_preferred",
+      "requiredEvidence": [
+        "current maximum duration",
+        "calls ending at or near the configured limit",
+        "unfinished caller intent"
+      ],
+      "signals": [
+        "Legitimate calls are cut off at the limit",
+        "The configured duration is disproportionate to the intended workflow"
+      ],
+      "guardrails": [
+        "Do not treat short or long calls as failures by duration alone",
+        "Use the documented 180-900 second range",
+        "Fix looping behavior before merely raising the limit"
+      ],
+      "validation": ["Retest the longest legitimate scenario and a looping or abandoned scenario"],
+      "sourceIds": ["create-agent-ui", "patch-agent-api"]
+    },
+    {
+      "id": "language.live-conversation",
+      "tier": "feature",
+      "category": "language",
+      "title": "Change the agent's live conversation language",
+      "uiPath": "Build > Language",
+      "applicationMode": "api_or_manual_ui",
+      "api": {
+        "status": "documented_write",
+        "field": "language",
+        "scope": "voice-ai-agents.write"
+      },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": [
+        "caller language",
+        "configured agent language",
+        "supported language/voice compatibility"
+      ],
+      "signals": [
+        "The agent consistently responds in the wrong language",
+        "The audience requires multilingual behavior",
+        "The selected voice is incompatible with the intended language"
+      ],
+      "guardrails": [
+        "Do not confuse live-call language with post-call translation",
+        "Review and test the auto-translated greeting"
+      ],
+      "validation": [
+        "Run native-speaker test scenarios and review greeting, comprehension, and action use"
+      ],
+      "sourceIds": ["create-agent-ui", "patch-agent-api", "translation", "voice-selection"]
+    },
+    {
+      "id": "translation.post-call-output",
+      "tier": "feature",
+      "category": "translation",
+      "title": "Enable or correct transcript and summary translation",
+      "uiPath": "Build > Translation",
+      "applicationMode": "api_or_manual_ui",
+      "api": {
+        "status": "documented_write",
+        "field": "translation",
+        "scope": "voice-ai-agents.write"
+      },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": [
+        "agent language",
+        "review-team target language",
+        "current translation setting"
+      ],
+      "signals": [
+        "Reviewers cannot use the original-language transcript",
+        "The configured translation target is wrong",
+        "Post-call workflows need translated artifacts"
+      ],
+      "guardrails": [
+        "Translation affects post-call written output, not the live conversation",
+        "The original record remains available",
+        "Follow HighLevel language compatibility rules"
+      ],
+      "validation": ["Complete a test call and inspect original and translated summary/transcript"],
+      "sourceIds": ["translation", "patch-agent-api"]
+    },
+    {
+      "id": "post-call.workflow-and-notifications",
+      "tier": "feature",
+      "category": "post_call",
+      "title": "Correct post-call workflows or notification recipients",
+      "uiPath": "Build > Post-Call",
+      "applicationMode": "api_or_manual_ui",
+      "api": {
+        "status": "documented_write",
+        "field": "callEndWorkflowIds and sendPostCallNotificationTo",
+        "scope": "voice-ai-agents.write"
+      },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": [
+        "configured workflow IDs or recipients",
+        "expected operational owner",
+        "call-end execution or delivery evidence"
+      ],
+      "signals": [
+        "A completed call needs a deterministic follow-up",
+        "The wrong team receives call details",
+        "Important summaries or action outcomes are not delivered"
+      ],
+      "guardrails": [
+        "Review transcript privacy before adding recipients",
+        "Do not conflate workflow failure with agent conversation quality",
+        "HighLevel documents at most 10 call-end workflow IDs"
+      ],
+      "validation": ["Run a test call and verify workflow enrollment and notification delivery"],
+      "sourceIds": ["create-agent-ui", "patch-agent-api"]
+    },
+    {
+      "id": "availability.working-hours-and-routing",
+      "tier": "feature",
+      "category": "deployment",
+      "title": "Correct phone assignment, working hours, timezone, or backup behavior",
+      "uiPath": "Deploy or Phone and Availability",
+      "applicationMode": "api_or_manual_ui",
+      "api": {
+        "status": "documented_write",
+        "field": "inboundNumber, numberPoolId, agentWorkingHours, timezone, isAgentAsBackupDisabled",
+        "scope": "voice-ai-agents.write"
+      },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": [
+        "current deployment configuration",
+        "call time and routing outcome",
+        "business availability policy"
+      ],
+      "signals": [
+        "The wrong agent receives a number's calls",
+        "Calls are handled outside intended hours",
+        "Timezone configuration makes schedules incorrect",
+        "Backup behavior routes calls unexpectedly"
+      ],
+      "guardrails": [
+        "Treat this as an operational configuration issue, not conversational quality",
+        "Verify number ownership and routing dependencies before changes"
+      ],
+      "validation": ["Test in-hours, after-hours, and primary-agent-unavailable paths"],
+      "sourceIds": ["create-agent-ui", "patch-agent-api"]
+    },
+    {
+      "id": "reporting.performance-email",
+      "tier": "feature",
+      "category": "reporting",
+      "title": "Configure an appropriate performance-report cadence and audience",
+      "uiPath": "Build > Reporting > Performance Report Settings",
+      "applicationMode": "manual_ui_only",
+      "api": { "status": "undocumented", "field": null, "scope": null },
+      "evidencePolicy": "pattern_preferred",
+      "requiredEvidence": [
+        "review ownership",
+        "agent call volume and operational cadence",
+        "recipient permissions"
+      ],
+      "signals": [
+        "Owners repeatedly miss calls requiring review",
+        "A stable agent needs periodic oversight without daily dashboard checks",
+        "Different stakeholders require agent-specific reporting"
+      ],
+      "guardrails": [
+        "This improves visibility rather than agent behavior",
+        "Avoid unnecessary recipient exposure",
+        "The feature may require Labs enablement"
+      ],
+      "validation": [
+        "Confirm the next report is delivered and linked users have permission to open call details"
+      ],
+      "sourceIds": ["performance-reports"]
+    },
+    {
+      "id": "transcription.boosted-keywords",
+      "tier": "advanced",
+      "category": "transcription",
+      "title": "Add boosted keywords for repeatedly misrecognized domain terms",
+      "uiPath": "Build > Transcription & Speech > Keywords",
+      "applicationMode": "manual_ui_only",
+      "api": { "status": "undocumented", "field": null, "scope": null },
+      "evidencePolicy": "pattern_preferred",
+      "requiredEvidence": [
+        "reviewed audio or trusted ground truth",
+        "specific misrecognized word or phrase",
+        "current keyword configuration if available"
+      ],
+      "signals": [
+        "Brand, product, location, person, or technical terms are transcribed incorrectly",
+        "The same recognition error changes intent, retrieval, or action selection"
+      ],
+      "guardrails": [
+        "Never diagnose an STT error from transcript text alone",
+        "Prefer a small verified vocabulary",
+        "Do not use boosting to fix wrong TTS pronunciation"
+      ],
+      "validation": [
+        "Create a pronunciation-varied audio test set and compare recognition before and after"
+      ],
+      "sourceIds": ["create-agent-ui", "prompt-optimizer"]
+    },
+    {
+      "id": "speech.pronunciation",
+      "tier": "advanced",
+      "category": "speech",
+      "title": "Correct how the agent pronounces a specific term",
+      "uiPath": "Build > Transcription & Speech > Pronunciation",
+      "applicationMode": "manual_ui_only",
+      "api": { "status": "undocumented", "field": null, "scope": null },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": [
+        "call recording",
+        "verified desired pronunciation",
+        "selected voice/language"
+      ],
+      "signals": [
+        "The agent audibly mispronounces a brand, place, product, or person's name",
+        "The pronunciation causes caller confusion or damages professionalism"
+      ],
+      "guardrails": [
+        "Do not infer pronunciation from transcript text",
+        "Do not confuse caller-to-text recognition with agent text-to-speech pronunciation"
+      ],
+      "validation": ["Preview or test the exact term in representative sentences and languages"],
+      "sourceIds": ["create-agent-ui", "prompt-optimizer", "system-prompts"]
+    },
+    {
+      "id": "transcription.stt-mode",
+      "tier": "advanced",
+      "category": "transcription",
+      "title": "Review the speech-to-text mode",
+      "uiPath": "Build > Transcription & Speech > STT Mode",
+      "applicationMode": "manual_ui_only",
+      "api": { "status": "undocumented", "field": null, "scope": null },
+      "evidencePolicy": "pattern_preferred",
+      "requiredEvidence": [
+        "recording-to-transcript comparison",
+        "caller language/accent and environment",
+        "current STT mode"
+      ],
+      "signals": [
+        "Broad transcription failures persist beyond a few vocabulary terms",
+        "Errors correlate with a documented language or environment mismatch"
+      ],
+      "guardrails": [
+        "Prefer keyword-level remediation for isolated terms",
+        "Do not recommend a mode when its current value and available choices are unknown"
+      ],
+      "validation": [
+        "Replay a labelled audio set across the available modes and compare task-relevant transcription errors"
+      ],
+      "sourceIds": ["create-agent-ui"]
+    },
+    {
+      "id": "audio.noise-cancellation",
+      "tier": "advanced",
+      "category": "audio",
+      "title": "Enable or change noise cancellation",
+      "uiPath": "Build > Voice Settings > Noise Cancellation",
+      "applicationMode": "manual_ui_only",
+      "api": { "status": "undocumented", "field": null, "scope": null },
+      "evidencePolicy": "pattern_preferred",
+      "requiredEvidence": [
+        "call recordings",
+        "known caller environment",
+        "current noise cancellation mode"
+      ],
+      "signals": [
+        "Ambient noise causes repeated misunderstandings",
+        "Nearby speech competes with the primary caller",
+        "Strong suppression appears to remove intended speech"
+      ],
+      "guardrails": [
+        "Start with Remove Noise before Remove Noise plus Background Speech",
+        "The feature may require Labs enablement",
+        "Do not infer noise from transcript alone"
+      ],
+      "validation": [
+        "Test in representative office, car, and public environments",
+        "Review whether intended speech is suppressed"
+      ],
+      "sourceIds": ["noise-backchannel"]
+    },
+    {
+      "id": "audio.backchanneling",
+      "tier": "advanced",
+      "category": "audio",
+      "title": "Tune backchannel frequency or phrases",
+      "uiPath": "Build > Voice Settings > Backchanneling",
+      "applicationMode": "manual_ui_only",
+      "api": { "status": "undocumented", "field": null, "scope": null },
+      "evidencePolicy": "pattern_preferred",
+      "requiredEvidence": [
+        "call recordings",
+        "current backchannel frequency and words",
+        "brand/language guidance"
+      ],
+      "signals": [
+        "The agent sounds disengaged during long caller turns",
+        "Acknowledgements are too frequent, culturally inappropriate, or overlap caller speech"
+      ],
+      "guardrails": [
+        "Keep phrases short and neutral",
+        "Coordinate with idle reminder timing",
+        "Do not infer backchannel quality from text-only transcripts"
+      ],
+      "validation": ["Test long-form caller speech and brief pauses with representative users"],
+      "sourceIds": ["noise-backchannel"]
+    },
+    {
+      "id": "behavior.response-and-interruption",
+      "tier": "advanced",
+      "category": "agent_behavior",
+      "title": "Tune response speed or interruption sensitivity",
+      "uiPath": "Build > Agent Behavior",
+      "applicationMode": "manual_ui_only",
+      "api": { "status": "undocumented", "field": null, "scope": null },
+      "evidencePolicy": "pattern_preferred",
+      "requiredEvidence": [
+        "recording with timestamps",
+        "current behavior settings",
+        "representative caller turn-taking"
+      ],
+      "signals": [
+        "The agent repeatedly cuts callers off",
+        "Long response gaps harm the conversation",
+        "The agent fails to yield when the caller interrupts"
+      ],
+      "guardrails": [
+        "Do not use transcript line order as timing evidence",
+        "Change one conversational timing control at a time",
+        "Do not confuse model latency with intentional response pacing"
+      ],
+      "validation": ["Compare interruption-heavy, slow-speaker, and normal-turn test scenarios"],
+      "sourceIds": ["create-agent-ui", "prompt-optimizer"]
+    },
+    {
+      "id": "behavior.temperature",
+      "tier": "advanced",
+      "category": "agent_behavior",
+      "title": "Run a controlled temperature experiment",
+      "uiPath": "Build > Agent Behavior > Temperature",
+      "applicationMode": "manual_ui_only",
+      "api": { "status": "undocumented", "field": null, "scope": null },
+      "evidencePolicy": "pattern_preferred",
+      "requiredEvidence": [
+        "current temperature",
+        "repeatable scenario failures",
+        "stable prompt and model"
+      ],
+      "signals": [
+        "Repeated tests show excessive variation or rigidity after prompt defects are ruled out"
+      ],
+      "guardrails": [
+        "Never recommend temperature from one transcript",
+        "Do not use temperature as a generic hallucination fix",
+        "Hold prompt, model, and scenarios constant"
+      ],
+      "validation": [
+        "Run repeated scenario tests at the current and one proposed value and inspect consistency and task completion"
+      ],
+      "sourceIds": ["create-agent-ui", "prompt-optimizer"]
+    },
+    {
+      "id": "voice.selection-and-model",
+      "tier": "advanced",
+      "category": "voice",
+      "title": "Change the voice or voice model",
+      "uiPath": "Build > Voice and Voice Model",
+      "applicationMode": "api_or_manual_ui",
+      "api": { "status": "partial", "field": "voiceId", "scope": "voice-ai-agents.write" },
+      "evidencePolicy": "pattern_preferred",
+      "requiredEvidence": [
+        "recordings or user feedback",
+        "audience language/accent",
+        "current voice and voice model"
+      ],
+      "signals": [
+        "Voice accent, tone, or language conflicts with the audience",
+        "Voice quality, latency, and cost trade-offs are unsuitable",
+        "A consistent branded voice is required"
+      ],
+      "guardrails": [
+        "Voice identity is API-writable, but the public agent API does not document the voice-model selector",
+        "Do not claim a voice change fixes reasoning or prompt logic",
+        "Imported voices are agency-level assets with documented limits"
+      ],
+      "validation": [
+        "Blind-preview candidate voices with representative scripts",
+        "Test latency and intelligibility on phone-quality audio"
+      ],
+      "sourceIds": ["voice-selection", "patch-agent-api"]
+    },
+    {
+      "id": "voice.output-controls",
+      "tier": "advanced",
+      "category": "voice",
+      "title": "Tune voice speed, volume, or background sound",
+      "uiPath": "Build > Voice Settings",
+      "applicationMode": "manual_ui_only",
+      "api": { "status": "undocumented", "field": null, "scope": null },
+      "evidencePolicy": "pattern_preferred",
+      "requiredEvidence": [
+        "call recordings",
+        "current voice settings",
+        "representative phone devices and environments"
+      ],
+      "signals": [
+        "Speech is consistently too fast, slow, quiet, or loud",
+        "Background sound reduces clarity or conflicts with the brand"
+      ],
+      "guardrails": [
+        "Do not infer audible quality from transcripts",
+        "Change one output control at a time",
+        "Test on telephony audio rather than studio speakers only"
+      ],
+      "validation": ["Compare recordings across typical devices and caller environments"],
+      "sourceIds": ["create-agent-ui", "voice-selection"]
+    },
+    {
+      "id": "model.llm-selection",
+      "tier": "advanced",
+      "category": "model",
+      "title": "Evaluate a different LLM model",
+      "uiPath": "Build > Model",
+      "applicationMode": "manual_ui_only",
+      "api": { "status": "undocumented", "field": null, "scope": null },
+      "evidencePolicy": "pattern_preferred",
+      "requiredEvidence": [
+        "current model",
+        "repeatable scenario suite",
+        "latency, quality, and cost requirements"
+      ],
+      "signals": [
+        "Failures persist after prompt, knowledge, and action configuration are correct",
+        "The workload has a clear quality-latency-cost mismatch"
+      ],
+      "guardrails": [
+        "Do not recommend a model from a single bad answer",
+        "Hold prompt and configuration constant",
+        "Validate action use and latency, not just prose quality"
+      ],
+      "validation": [
+        "Run the same scenario suite across candidate models and review qualitative failures, action correctness, latency, and cost"
+      ],
+      "sourceIds": ["create-agent-ui", "prompt-optimizer"]
+    },
+    {
+      "id": "system-prompts.module",
+      "tier": "advanced",
+      "category": "system_prompt",
+      "title": "Edit the relevant exposed system-prompt module",
+      "uiPath": "Build > System Prompts",
+      "applicationMode": "manual_ui_only",
+      "api": { "status": "undocumented", "field": null, "scope": null },
+      "evidencePolicy": "pattern_preferred",
+      "requiredEvidence": [
+        "current system-prompt module",
+        "repeatable failure tied to personality, booking, date/time, numbers/symbols, or email confirmation",
+        "main prompt review"
+      ],
+      "signals": [
+        "A foundational behavior conflicts with the business despite a correct agent prompt",
+        "Date/time interpretation, number speech, or email confirmation repeatedly follows an unsuitable default"
+      ],
+      "guardrails": [
+        "Use only after ruling out the main prompt and configuration",
+        "HighLevel warns that edits require ongoing maintenance",
+        "Change the narrowest module and preserve safe defaults",
+        "Keep a copy and rollback plan"
+      ],
+      "validation": [
+        "Run focused module scenarios plus regression tests for unrelated foundational behavior",
+        "Use Reset to Default if the change degrades performance"
+      ],
+      "sourceIds": ["system-prompts", "prompt-optimizer"]
+    },
+    {
+      "id": "outbound.disclosure-and-intent",
+      "tier": "advanced",
+      "category": "outbound",
+      "title": "Correct outbound disclosure, purpose, or workflow targeting",
+      "uiPath": "Build > Outbound Settings and Automation > Voice AI Outbound Call",
+      "applicationMode": "manual_ui_only",
+      "api": { "status": "undocumented", "field": null, "scope": null },
+      "evidencePolicy": "single_call_can_suffice",
+      "requiredEvidence": [
+        "outbound call purpose",
+        "current disclosure and intent configuration",
+        "applicable consent/compliance policy",
+        "originating workflow"
+      ],
+      "signals": [
+        "The recipient does not understand why they were called",
+        "The agent proceeds without required disclosure",
+        "The wrong contacts, workflow, agent, or number are used",
+        "Voicemail/no-answer handling conflicts with the campaign"
+      ],
+      "guardrails": [
+        "Treat legal requirements as jurisdiction- and campaign-specific",
+        "Do not generate definitive legal advice",
+        "Prioritize stopping non-compliant outreach over conversational optimization"
+      ],
+      "validation": [
+        "Test connected, voicemail, no-answer, opt-out, and wrong-person scenarios with compliance review"
+      ],
+      "sourceIds": ["outbound", "create-agent-ui"]
+    }
+  ]
+}

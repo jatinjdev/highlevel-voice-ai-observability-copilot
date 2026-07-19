@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "analyses_call_id_idx" ON "analyses" USING btree ("call_id");

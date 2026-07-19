@@ -1,0 +1,90 @@
+{
+  "generatedAt": "2026-07-16T13:07:45.786Z",
+  "model": "opencode:openai/gpt-5.4",
+  "corpus": "Harper Valley HighLevel call evaluation suite",
+  "sourceRevision": "0bd721e877c4a85d8c13ff837e68661ea6200a98",
+  "scope": "focused",
+  "total": 2,
+  "passed": 0,
+  "results": [
+    {
+      "id": "harper-valley-0002f70f7386445b",
+      "passed": false,
+      "mismatches": [
+        "customer_outcome was review; expected clear",
+        "User Action presence was true; expected false"
+      ],
+      "actual": {
+        "outcome": "success",
+        "criteria": {
+          "customer_outcome": "review",
+          "prompt_requirements": "review",
+          "problematic_behavior": "clear",
+          "agent_caused_frustration": "review",
+          "listening_and_context": "review",
+          "relevance_and_clarity": "review",
+          "appropriate_empathy": "clear",
+          "grounding_and_uncertainty": "clear",
+          "escalation_judgment": "review"
+        },
+        "userActions": [
+          {
+            "kind": "follow_up",
+            "checkKeys": ["customer_outcome"],
+            "title": "Follow up with caller to confirm replacement debit card request status",
+            "transcriptLine": 16
+          },
+          {
+            "kind": "script_training",
+            "checkKeys": ["prompt_requirements", "relevance_and_clarity", "listening_and_context"],
+            "title": "Review call handling for explicit confirmation before closing",
+            "transcriptLine": 14
+          },
+          {
+            "kind": "human_review",
+            "checkKeys": ["agent_caused_frustration"],
+            "title": "Review agent caused frustration",
+            "transcriptLine": 11
+          },
+          {
+            "kind": "human_review",
+            "checkKeys": ["escalation_judgment"],
+            "title": "Review escalation judgment",
+            "transcriptLine": 11
+          }
+        ]
+      }
+    },
+    {
+      "id": "harper-valley-4640c702d4b3414d",
+      "passed": false,
+      "mismatches": ["User Action presence was true; expected false"],
+      "actual": {
+        "outcome": "success",
+        "criteria": {
+          "customer_outcome": "clear",
+          "prompt_requirements": "review",
+          "problematic_behavior": "review",
+          "agent_caused_frustration": "clear",
+          "listening_and_context": "clear",
+          "relevance_and_clarity": "clear",
+          "appropriate_empathy": "not_applicable",
+          "grounding_and_uncertainty": "review",
+          "escalation_judgment": "not_applicable"
+        },
+        "userActions": [
+          {
+            "kind": "script_training",
+            "checkKeys": [
+              "prompt_requirements",
+              "problematic_behavior",
+              "grounding_and_uncertainty"
+            ],
+            "title": "Retrain precise status wording for completed check orders",
+            "transcriptLine": 10
+          }
+        ]
+      }
+    }
+  ]
+}

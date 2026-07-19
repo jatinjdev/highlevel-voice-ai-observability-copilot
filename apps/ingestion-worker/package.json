@@ -1,0 +1,31 @@
+{
+  "name": "@copilot/ingestion-worker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "nest build",
+    "dev": "nest start --watch",
+    "start": "node dist/main.js",
+    "lint": "eslint src",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@copilot/contracts": "workspace:*",
+    "@copilot/database": "workspace:*",
+    "@copilot/messaging": "workspace:*",
+    "@nestjs/common": "11.1.28",
+    "@nestjs/config": "4.0.4",
+    "@nestjs/core": "11.1.28",
+    "drizzle-orm": "0.45.2",
+    "pg": "8.22.0",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "11.0.24",
+    "@types/pg": "8.20.0",
+    "vitest": "4.1.10"
+  }
+}

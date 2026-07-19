@@ -1,0 +1,2 @@
+DROP INDEX "recommendations_call_run_target_idx";--> statement-breakpoint
+CREATE UNIQUE INDEX "recommendations_call_run_change_idx" ON "recommendations" USING btree ("call_analysis_run_id","deduplication_key") WHERE "recommendations"."call_analysis_run_id" is not null;

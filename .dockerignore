@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+!.env.example
+**/node_modules
+**/dist
+**/.turbo
+docs/reviews/**/*.png
+*.log
+.DS_Store

@@ -1,0 +1,24 @@
+{
+  "name": "@copilot/messaging",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "lint": "eslint src",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sqs": "3.883.0",
+    "@copilot/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "4.1.10"
+  }
+}

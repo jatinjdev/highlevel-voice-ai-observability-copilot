@@ -1,0 +1,35 @@
+{
+  "name": "voice-ai-observability-copilot",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.19.0",
+  "engines": {
+    "node": ">=22.20.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "pnpm --filter @copilot/api db:generate",
+    "db:migrate": "pnpm --filter @copilot/api db:migrate",
+    "db:studio": "pnpm --filter @copilot/api db:studio"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "22.20.1",
+    "eslint": "10.7.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-vue": "10.9.2",
+    "globals": "17.7.0",
+    "prettier": "3.9.5",
+    "turbo": "2.10.4",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.63.0"
+  }
+}

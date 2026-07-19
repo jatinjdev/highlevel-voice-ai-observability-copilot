@@ -1,0 +1,19 @@
+node_modules/
+.pnpm-store/
+.turbo/
+dist/
+coverage/
+tmp/
+*.tsbuildinfo
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# IDE and OS files
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
