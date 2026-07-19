@@ -161,18 +161,18 @@ independent, versionable results rather than one monolithic analysis blob.
 
 ## Provider pattern mapped to our HighLevel app
 
-| Provider pattern | Our implementation |
-| --- | --- |
-| Durable call and transcript artifact | `Call` plus immutable normalized transcript turns and authoritative action events |
-| Agent/version identity on each call | Store HighLevel agent ID and configuration snapshot/version used by the analysis |
-| Separate summary, extraction, sentiment, criteria | Independent result records under one analysis run; never one opaque response blob |
-| Typed custom fields | Criteria and extractions have stable IDs, result types, nullable behavior, and versioned definitions |
-| `unknown` or missing output | Use `insufficient_evidence` and `not_applicable`; do not convert missing evidence into failure |
-| Criterion-specific rerun | Queue selected criterion IDs for selected call IDs and reuse unchanged results |
-| Batch backfill | Rerun last 24 hours/7 days or filtered calls against a chosen criteria version |
-| Separate coach and diff proposal | Generate recommendations only from validated findings; store exact paste-ready change separately |
-| Tool results in analysis context | Treat actual HighLevel call actions/events as authoritative over what the agent claims in speech |
-| Test transcript preview | Run every rubric and recommendation prompt against a labelled transcript suite before promotion |
+| Provider pattern                                  | Our implementation                                                                                   |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Durable call and transcript artifact              | `Call` plus immutable normalized transcript turns and authoritative action events                    |
+| Agent/version identity on each call               | Store HighLevel agent ID and configuration snapshot/version used by the analysis                     |
+| Separate summary, extraction, sentiment, criteria | Independent result records under one analysis run; never one opaque response blob                    |
+| Typed custom fields                               | Criteria and extractions have stable IDs, result types, nullable behavior, and versioned definitions |
+| `unknown` or missing output                       | Use `insufficient_evidence` and `not_applicable`; do not convert missing evidence into failure       |
+| Criterion-specific rerun                          | Queue selected criterion IDs for selected call IDs and reuse unchanged results                       |
+| Batch backfill                                    | Rerun last 24 hours/7 days or filtered calls against a chosen criteria version                       |
+| Separate coach and diff proposal                  | Generate recommendations only from validated findings; store exact paste-ready change separately     |
+| Tool results in analysis context                  | Treat actual HighLevel call actions/events as authoritative over what the agent claims in speech     |
+| Test transcript preview                           | Run every rubric and recommendation prompt against a labelled transcript suite before promotion      |
 
 ## Recommended analysis contract
 
@@ -187,12 +187,8 @@ Normalize HighLevel data into a provider-neutral call artifact:
   "configurationSnapshotId": "snapshot-789",
   "startedAt": "...",
   "endedReason": "...",
-  "turns": [
-    { "id": "t1", "role": "agent", "text": "...", "offsetMs": 0 }
-  ],
-  "events": [
-    { "id": "e1", "type": "action.completed", "action": "book_appointment" }
-  ],
+  "turns": [{ "id": "t1", "role": "agent", "text": "...", "offsetMs": 0 }],
+  "events": [{ "id": "e1", "type": "action.completed", "action": "book_appointment" }],
   "evidenceCapabilities": {
     "hasTranscript": true,
     "hasTurnTimestamps": false,

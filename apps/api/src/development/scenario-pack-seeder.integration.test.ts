@@ -18,10 +18,13 @@ const pack: EvaluationScenarioPack = {
   calls: [],
 };
 
-describe.runIf(process.env.RUN_DATABASE_TESTS === '1')('seedScenarioPack database integration', () => {
-  it('activates user-defined Success Criteria for the evaluation Voice Agent', async () => {
-    const result = await seedScenarioPack(pack);
+describe.runIf(process.env.RUN_DATABASE_TESTS === '1')(
+  'seedScenarioPack database integration',
+  () => {
+    it('activates user-defined Success Criteria for the evaluation Voice Agent', async () => {
+      const result = await seedScenarioPack(pack);
 
-    expect(result.criteriaActivated).toBe(1);
-  });
-});
+      expect(result.criteriaActivated).toBe(1);
+    });
+  },
+);

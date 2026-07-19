@@ -6,7 +6,7 @@ import { AppModule } from './app.module';
 async function bootstrap(): Promise<void> {
   const application = await NestFactory.createApplicationContext(AppModule);
   application.enableShutdownHooks();
-  new Logger('Bootstrap').log('Analysis worker is consuming call and agent analyses.');
+  new Logger('Bootstrap').log('Analysis worker is evaluating call Success Criteria.');
 }
 
 void bootstrap();

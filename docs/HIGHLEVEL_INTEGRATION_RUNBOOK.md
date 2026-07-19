@@ -53,12 +53,12 @@ flowchart TD
 
 Deploy the app before creating the Marketplace version. Replace `https://copilot.example.com` below with the stable HTTPS origin.
 
-| Purpose          | Planned URL                                                    |
-| ---------------- | -------------------------------------------------------------- |
-| Custom Page      | `https://dng3naypayh7.cloudfront.net/`                         |
-| OAuth redirect   | `https://dng3naypayh7.cloudfront.net/api/leadconnector/oauth`  |
-| Webhook receiver | `https://dng3naypayh7.cloudfront.net/api/leadconnector/webhook`|
-| Health check     | `https://dng3naypayh7.cloudfront.net/api/health`               |
+| Purpose          | Planned URL                                                     |
+| ---------------- | --------------------------------------------------------------- |
+| Custom Page      | `https://dng3naypayh7.cloudfront.net/`                          |
+| OAuth redirect   | `https://dng3naypayh7.cloudfront.net/api/leadconnector/oauth`   |
+| Webhook receiver | `https://dng3naypayh7.cloudfront.net/api/leadconnector/webhook` |
+| Health check     | `https://dng3naypayh7.cloudfront.net/api/health`                |
 
 The Custom Page must allow HighLevel to embed it. Do not return `X-Frame-Options: DENY` or `SAMEORIGIN`; configure the `Content-Security-Policy` `frame-ancestors` directive to allow the required HighLevel domains.
 
@@ -367,7 +367,7 @@ The implemented endpoints are:
 | Endpoint                                             | Purpose                                                            |
 | ---------------------------------------------------- | ------------------------------------------------------------------ |
 | `GET /api/leadconnector/oauth`                       | Exchanges the install code and persists encrypted tokens           |
-| `GET /api/leadconnector/oauth/callback`              | Backward-compatible alias for an earlier test redirect              |
+| `GET /api/leadconnector/oauth/callback`              | Backward-compatible alias for an earlier test redirect             |
 | `GET /api/leadconnector/oauth/status?locationId=...` | Returns connection mode and expiry, never token material           |
 | `POST /api/leadconnector/webhook`                    | Verifies and durably accepts lifecycle and call-end events         |
 | `POST /api/leadconnector/session`                    | Exchanges signed iframe context for a short-lived app session      |

@@ -12,6 +12,9 @@ Parameters:
   DatabaseInstanceClass:
     Type: String
     Default: db.t4g.micro
+  CloudFrontOriginFacingPrefixListId:
+    Type: String
+    Description: Regional AWS-managed prefix list for com.amazonaws.global.cloudfront.origin-facing
   LatestAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
@@ -117,7 +120,7 @@ Resources:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          CidrIp: 0.0.0.0/0
+          SourcePrefixListId: !Ref CloudFrontOriginFacingPrefixListId
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
@@ -177,7 +180,7 @@ Resources:
       BackupRetentionPeriod: 7
       AutoMinorVersionUpgrade: true
       CopyTagsToSnapshot: true
-      DeletionProtection: false
+      DeletionProtection: true
       DBSubnetGroupName: !Ref DatabaseSubnetGroup
       VPCSecurityGroups:
         - !Ref DatabaseSecurityGroup
@@ -231,16 +234,70 @@ Resources:
       RepositoryName: !Sub ${ProjectName}-app
       ImageScanningConfiguration:
         ScanOnPush: true
+      ImageTagMutability: IMMUTABLE
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep the latest 20 release images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 20
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+
+  ApplicationBuildCacheRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      RepositoryName: !Sub ${ProjectName}-build-cache
       ImageTagMutability: MUTABLE
       EncryptionConfiguration:
         EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep only the current BuildKit cache",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 1
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
 
   ApplicationSecret:
     Type: AWS::SecretsManager::Secret
     Properties:
       Name: !Sub ${ProjectName}/application
       Description: Runtime-only HighLevel and language-model configuration
-      SecretString: '{"imageTag":""}'
+      SecretString: '{}'
+
+  OriginVerificationSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${ProjectName}/cloudfront-origin
+      Description: Shared header used only to authenticate this CloudFront distribution to the ALB
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: token
+        PasswordLength: 48
+        ExcludePunctuation: true
 
   ApplicationLogGroup:
     Type: AWS::Logs::LogGroup
@@ -282,6 +339,10 @@ Resources:
                   - !GetAtt Database.MasterUserSecret.SecretArn
               - Effect: Allow
                 Action:
+                  - ssm:GetParameter
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectName}/runtime/image
+              - Effect: Allow
+                Action:
                   - ecr:GetAuthorizationToken
                 Resource: '*'
               - Effect: Allow
@@ -303,105 +364,31 @@ Resources:
       Roles:
         - !Ref InstanceRole
 
-  ApplicationLaunchTemplate:
-    Type: AWS::EC2::LaunchTemplate
-    Properties:
-      LaunchTemplateData:
-        ImageId: !Ref LatestAmiId
-        InstanceType: !Ref InstanceType
-        IamInstanceProfile:
-          Arn: !GetAtt InstanceProfile.Arn
-        SecurityGroupIds:
-          - !Ref ApplicationSecurityGroup
-        MetadataOptions:
-          HttpEndpoint: enabled
-          HttpTokens: required
-          HttpPutResponseHopLimit: 2
-        BlockDeviceMappings:
-          - DeviceName: /dev/xvda
-            Ebs:
-              VolumeSize: 30
-              VolumeType: gp3
-              Encrypted: true
-              DeleteOnTermination: true
-        UserData:
-          Fn::Base64: !Sub |
-            #!/bin/bash
-            set -euo pipefail
-            dnf install -y docker jq python3
-            systemctl enable --now docker
-
-            cat >/usr/local/bin/deploy-voice-agent <<'SCRIPT'
-            #!/bin/bash
-            set -euo pipefail
-            REGION='${AWS::Region}'
-            ACCOUNT='${AWS::AccountId}'
-            APP_SECRET='${ApplicationSecret}'
-            DB_SECRET='${Database.MasterUserSecret.SecretArn}'
-            DB_HOST='${Database.Endpoint.Address}'
-            DB_PORT='${Database.Endpoint.Port}'
-            ECR_REPOSITORY='${ApplicationRepository.RepositoryUri}'
-            INGESTION_QUEUE='${IngestionQueue}'
-            ANALYSIS_QUEUE='${AnalysisQueue}'
-            LOG_GROUP='${ApplicationLogGroup}'
-
-            APP_JSON=$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "$APP_SECRET" --query SecretString --output text)
-            IMAGE_TAG=$(printf '%s' "$APP_JSON" | jq -r '.imageTag // empty')
-            WEB_ORIGIN=$(printf '%s' "$APP_JSON" | jq -r '.WEB_ORIGIN // empty')
-            if [ -z "$IMAGE_TAG" ] || [ -z "$WEB_ORIGIN" ]; then
-              echo 'Application secret is not populated yet; deployment deferred.'
-              exit 0
-            fi
-
-            DB_JSON=$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "$DB_SECRET" --query SecretString --output text)
-            DB_USER=$(printf '%s' "$DB_JSON" | jq -r '.username')
-            DB_PASSWORD=$(printf '%s' "$DB_JSON" | jq -r '.password')
-            DATABASE_URL=$(python3 - "$DB_USER" "$DB_PASSWORD" "$DB_HOST" "$DB_PORT" <<'PY'
-            import sys
-            from urllib.parse import quote
-            user, password, host, port = sys.argv[1:]
-            print(f"postgresql://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{port}/copilot?sslmode=verify-full")
-            PY
-            )
-
-            install -d -m 700 /etc/voice-ai-observability
-            ENV_FILE=/etc/voice-ai-observability/runtime.env
-            umask 077
-            {
-              printf 'NODE_ENV=production\n'
-              printf 'PORT=3000\n'
-              printf 'AWS_REGION=%s\n' "$REGION"
-              printf 'DATABASE_URL=%s\n' "$DATABASE_URL"
-              printf 'SQS_INGESTION_QUEUE_URL=%s\n' "$INGESTION_QUEUE"
-              printf 'SQS_ANALYSIS_QUEUE_URL=%s\n' "$ANALYSIS_QUEUE"
-              printf 'OUTBOX_PUBLISHER_ENABLED=true\n'
-              for KEY in WEB_ORIGIN HIGHLEVEL_CLIENT_ID HIGHLEVEL_CLIENT_SECRET HIGHLEVEL_REDIRECT_URI HIGHLEVEL_POST_INSTALL_REDIRECT_URI HIGHLEVEL_TOKEN_ENCRYPTION_KEY HIGHLEVEL_APP_SHARED_SECRET LLM_PROVIDER LLM_PROVIDER_ID LLM_BASE_URL LLM_MODEL LLM_API_KEY LLM_STRUCTURED_OUTPUT_MODE LLM_MAX_OUTPUT_TOKENS LLM_REQUEST_TIMEOUT_MS LLM_EXTRA_BODY_JSON ANALYSIS_CONCURRENCY; do
-                VALUE=$(printf '%s' "$APP_JSON" | jq -r --arg key "$KEY" '.[$key] // empty')
-                if [ -n "$VALUE" ]; then printf '%s=%s\n' "$KEY" "$VALUE"; fi
-              done
-            } >"$ENV_FILE"
-
-            aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
-            IMAGE="$ECR_REPOSITORY:$IMAGE_TAG"
-            docker pull "$IMAGE"
-
-            docker run --rm --env-file "$ENV_FILE" "$IMAGE" pnpm db:migrate
-            docker run --rm --env-file "$ENV_FILE" "$IMAGE" pnpm --filter @copilot/api seed:catalogue
-
-            for NAME in api ingestion-worker analysis-worker; do docker rm -f "voice-ai-$NAME" >/dev/null 2>&1 || true; done
-            docker run -d --name voice-ai-api --restart unless-stopped --env-file "$ENV_FILE" -p 3000:3000 --log-driver awslogs --log-opt awslogs-region="$REGION" --log-opt awslogs-group="$LOG_GROUP" --log-opt awslogs-stream=api "$IMAGE" pnpm --filter @copilot/api start
-            docker run -d --name voice-ai-ingestion-worker --restart unless-stopped --env-file "$ENV_FILE" --log-driver awslogs --log-opt awslogs-region="$REGION" --log-opt awslogs-group="$LOG_GROUP" --log-opt awslogs-stream=ingestion-worker "$IMAGE" pnpm --filter @copilot/ingestion-worker start
-            docker run -d --name voice-ai-analysis-worker --restart unless-stopped --env-file "$ENV_FILE" --log-driver awslogs --log-opt awslogs-region="$REGION" --log-opt awslogs-group="$LOG_GROUP" --log-opt awslogs-stream=analysis-worker "$IMAGE" pnpm --filter @copilot/analysis-worker start
-            SCRIPT
-            chmod 700 /usr/local/bin/deploy-voice-agent
-            /usr/local/bin/deploy-voice-agent || true
-
   ApplicationInstance:
     Type: AWS::EC2::Instance
     Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref ApplicationLaunchTemplate
-        Version: !GetAtt ApplicationLaunchTemplate.LatestVersionNumber
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      SecurityGroupIds:
+        - !Ref ApplicationSecurityGroup
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+        HttpPutResponseHopLimit: 2
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -euo pipefail
+          dnf install -y docker jq python3
+          systemctl enable --now docker
       SubnetId: !Ref PublicSubnetA
       Tags:
         - Key: Name
@@ -429,7 +416,7 @@ Resources:
         - Id: !Ref ApplicationInstance
           Port: 3000
       HealthCheckEnabled: true
-      HealthCheckPath: /api/health
+      HealthCheckPath: /api/health/ready
       HealthCheckProtocol: HTTP
       HealthyThresholdCount: 2
       UnhealthyThresholdCount: 3
@@ -445,6 +432,24 @@ Resources:
       Port: 80
       Protocol: HTTP
       DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: '403'
+            ContentType: text/plain
+            MessageBody: Forbidden
+
+  ApplicationListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ApplicationListener
+      Priority: 1
+      Conditions:
+        - Field: http-header
+          HttpHeaderConfig:
+            HttpHeaderName: X-Origin-Verify
+            Values:
+              - !Sub '{{resolve:secretsmanager:${OriginVerificationSecret}:SecretString:token}}'
+      Actions:
         - Type: forward
           TargetGroupArn: !Ref ApplicationTargetGroup
 
@@ -464,6 +469,14 @@ Resources:
         RestrictPublicBuckets: true
       VersioningConfiguration:
         Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireNoncurrentFrontendVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
 
   FrontendOriginAccessControl:
     Type: AWS::CloudFront::OriginAccessControl
@@ -519,6 +532,9 @@ Resources:
             S3OriginConfig: {}
           - Id: application-alb
             DomainName: !GetAtt ApplicationLoadBalancer.DNSName
+            OriginCustomHeaders:
+              - HeaderName: X-Origin-Verify
+                HeaderValue: !Sub '{{resolve:secretsmanager:${OriginVerificationSecret}:SecretString:token}}'
             CustomOriginConfig:
               HTTPPort: 80
               OriginProtocolPolicy: http-only
@@ -564,6 +580,91 @@ Resources:
               StringEquals:
                 AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}
 
+  ApiUnhealthyTargetAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: The API target is failing its database-backed readiness check
+      Namespace: AWS/ApplicationELB
+      MetricName: UnHealthyHostCount
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt ApplicationLoadBalancer.LoadBalancerFullName
+        - Name: TargetGroup
+          Value: !GetAtt ApplicationTargetGroup.TargetGroupFullName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: breaching
+
+  IngestionQueueAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Ingestion messages have waited for more than five minutes
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt IngestionQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 3
+      Threshold: 300
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  AnalysisQueueAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Analysis messages have waited for more than ten minutes
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt AnalysisQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 3
+      Threshold: 600
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  IngestionDeadLetterAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: At least one ingestion message is in the dead-letter queue
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt IngestionDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  AnalysisDeadLetterAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: At least one analysis message is in the dead-letter queue
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt AnalysisDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
 Outputs:
   CloudFrontDomain:
     Value: !GetAtt FrontendDistribution.DomainName
@@ -577,12 +678,20 @@ Outputs:
     Value: !Ref ApplicationInstance
   ApplicationRepositoryUri:
     Value: !GetAtt ApplicationRepository.RepositoryUri
+  ApplicationBuildCacheRepositoryUri:
+    Value: !GetAtt ApplicationBuildCacheRepository.RepositoryUri
   ApplicationSecretArn:
     Value: !Ref ApplicationSecret
+  ApplicationLogGroupName:
+    Value: !Ref ApplicationLogGroup
   DatabaseEndpoint:
     Value: !GetAtt Database.Endpoint.Address
+  DatabaseIdentifier:
+    Value: !Ref Database
   DatabaseSecretArn:
     Value: !GetAtt Database.MasterUserSecret.SecretArn
+  RuntimeImageParameterName:
+    Value: !Sub /${ProjectName}/runtime/image
   IngestionQueueUrl:
     Value: !Ref IngestionQueue
   AnalysisQueueUrl:

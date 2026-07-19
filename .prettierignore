@@ -5,3 +5,5 @@ coverage
 pnpm-lock.yaml
 .claude
 apps/api/drizzle/meta
+Dockerfile
+infra/aws/*.sh

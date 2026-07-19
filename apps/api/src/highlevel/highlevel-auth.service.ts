@@ -74,9 +74,10 @@ const installedLocationsResponseSchema = z.preprocess(
   (value) => {
     if (!value || typeof value !== 'object') return value;
     const response = value as Record<string, unknown>;
-    const data = response.data && typeof response.data === 'object'
-      ? (response.data as Record<string, unknown>)
-      : response;
+    const data =
+      response.data && typeof response.data === 'object'
+        ? (response.data as Record<string, unknown>)
+        : response;
     return {
       items: data.items,
       pagination: data.pagination,
@@ -372,7 +373,10 @@ export class HighLevelAuthService {
     const developmentLocationId = this.configService.get('SUB_ACCOUNT_LOCATION_ID', {
       infer: true,
     });
-    if (this.configService.get('NODE_ENV', { infer: true }) !== 'production' && developmentLocationId) {
+    if (
+      this.configService.get('NODE_ENV', { infer: true }) !== 'production' &&
+      developmentLocationId
+    ) {
       return [developmentLocationId];
     }
     throw new UnprocessableEntityException(

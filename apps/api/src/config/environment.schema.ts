@@ -80,6 +80,14 @@ export const environmentSchema = z
       });
     }
 
+    if (environment.NODE_ENV === 'production' && !environment.HIGHLEVEL_APP_ID) {
+      context.addIssue({
+        code: 'custom',
+        message: 'HIGHLEVEL_APP_ID is required in production.',
+        path: ['HIGHLEVEL_APP_ID'],
+      });
+    }
+
     if (environment.NODE_ENV === 'production' && !environment.DATABASE_URL) {
       context.addIssue({
         code: 'custom',

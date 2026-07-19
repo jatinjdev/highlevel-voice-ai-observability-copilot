@@ -12,9 +12,8 @@
     "seed:evals": "tsx src/development/seed-evaluation-corpus.ts",
     "seed:theobroma": "tsx src/development/seed-theobroma-evaluation-agent.ts",
     "seed:prompt-remediation": "tsx src/development/seed-prompt-remediation-evaluation-agent.ts",
-    "report:prompt-remediation": "tsx src/development/report-prompt-remediation-evaluation.ts",
-    "seed:catalogue": "tsx src/development/seed-recommendation-catalogue.ts",
     "sync:location": "node dist/development/sync-location.js",
+    "db:migrate:runtime": "node dist/database/migrate.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"

@@ -97,10 +97,7 @@ export class OpenAiCompatibleLanguageModel implements StructuredOutputLanguageMo
 
 /** Exact JSON body used for OpenAI-compatible JSON Schema requests. */
 export function buildOpenAiCompatibleJsonSchemaBody<TSchema extends z.ZodType>(
-  options: Pick<
-    OpenAiCompatibleLanguageModelOptions,
-    'model' | 'maxOutputTokens' | 'extraBody'
-  >,
+  options: Pick<OpenAiCompatibleLanguageModelOptions, 'model' | 'maxOutputTokens' | 'extraBody'>,
   request: StructuredGenerationRequest<TSchema>,
 ) {
   return {

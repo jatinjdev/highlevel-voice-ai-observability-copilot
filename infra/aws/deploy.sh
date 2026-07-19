@@ -4,132 +4,341 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
+COMMAND="${1:-}"
+CONFIG_TARGET="${2:-all}"
 PROFILE="${AWS_PROFILE:-SysAdmin}"
 REGION="${AWS_REGION:-ap-south-1}"
 STACK_NAME="${STACK_NAME:-voice-ai-observability}"
 PROJECT_NAME="${PROJECT_NAME:-voice-ai-observability}"
-IMAGE_TAG="${IMAGE_TAG:-$(date -u +%Y%m%d%H%M%S)}"
 ENV_FILE="${ENV_FILE:-.env}"
+TEMP_FILES=()
 
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Missing $ENV_FILE" >&2
-  exit 1
+cleanup() {
+  if ((${#TEMP_FILES[@]} > 0)); then rm -f -- "${TEMP_FILES[@]}"; fi
+}
+trap cleanup EXIT
+
+usage() {
+  cat <<'USAGE'
+Usage: bash infra/aws/deploy.sh <command> [target]
+
+Commands:
+  infra                 Update CloudFormation only.
+  backend               Build and release backend code without a migration.
+  backend-migrate       Snapshot RDS, migrate while drained, then release backend code.
+  frontend              Build and publish the Vue application only.
+  config <target>       Update runtime configuration and restart api, ingestion,
+                        analysis, or all. The default target is all.
+  all                   Run checks, infra, config, migration-safe backend release,
+                        and frontend publication.
+USAGE
+}
+
+if [[ -z "$COMMAND" ]]; then
+  usage
+  exit 2
 fi
 
-for command in aws docker jq openssl pnpm; do
-  command -v "$command" >/dev/null || {
-    echo "Missing required command: $command" >&2
+case "$COMMAND" in
+  infra | backend | backend-migrate | frontend | config | all) ;;
+  *) usage; exit 2 ;;
+esac
+case "$CONFIG_TARGET" in
+  api | ingestion | analysis | all) ;;
+  *) echo "Unknown configuration target: $CONFIG_TARGET" >&2; exit 2 ;;
+esac
+
+for executable in aws base64 curl jq node; do
+  command -v "$executable" >/dev/null || {
+    echo "Missing required command: $executable" >&2
     exit 1
   }
 done
 
-set -a
-source "$ENV_FILE"
-set +a
+aws_cli() {
+  aws --profile "$PROFILE" --region "$REGION" "$@"
+}
 
-if [[ -z "${HIGHLEVEL_CLIENT_ID:-}" || -z "${HIGHLEVEL_CLIENT_SECRET:-}" || -z "${HIGHLEVEL_TOKEN_ENCRYPTION_KEY:-}" ]]; then
-  echo 'HighLevel OAuth and token-encryption values are required.' >&2
-  exit 1
-fi
+aws_cli sts get-caller-identity >/dev/null
 
-production_llm_provider="${PRODUCTION_LLM_PROVIDER:-${LLM_PROVIDER:-none}}"
-if [[ "$production_llm_provider" == "opencode" ]]; then
-  echo 'The local OpenCode adapter is not deployable as an unattended production credential. Set PRODUCTION_LLM_PROVIDER=openai-compatible with LLM_API_KEY, or use none for an infrastructure-only smoke test.' >&2
-  exit 1
-fi
-if [[ "$production_llm_provider" == "openai-compatible" && -z "${LLM_API_KEY:-}" ]]; then
-  echo 'LLM_API_KEY is required for production semantic analysis.' >&2
-  exit 1
-fi
+deploy_infrastructure() {
+  local cloudfront_prefix_list
+  cloudfront_prefix_list="$(aws_cli ec2 describe-managed-prefix-lists \
+    --filters Name=prefix-list-name,Values=com.amazonaws.global.cloudfront.origin-facing \
+    --query 'PrefixLists[0].PrefixListId' \
+    --output text)"
+  if [[ -z "$cloudfront_prefix_list" || "$cloudfront_prefix_list" == None ]]; then
+    echo 'The CloudFront origin-facing managed prefix list could not be resolved.' >&2
+    exit 1
+  fi
 
-aws sts get-caller-identity --profile "$PROFILE" >/dev/null
-
-aws cloudformation deploy \
-  --profile "$PROFILE" \
-  --region "$REGION" \
-  --stack-name "$STACK_NAME" \
-  --template-file infra/aws/cloudformation.yml \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides ProjectName="$PROJECT_NAME" \
-  --no-fail-on-empty-changeset
-
-outputs="$(aws cloudformation describe-stacks --profile "$PROFILE" --region "$REGION" --stack-name "$STACK_NAME" --query 'Stacks[0].Outputs' --output json)"
-output() { printf '%s' "$outputs" | jq -r --arg key "$1" '.[] | select(.OutputKey == $key) | .OutputValue'; }
-
-repository_uri="$(output ApplicationRepositoryUri)"
-secret_arn="$(output ApplicationSecretArn)"
-bucket="$(output FrontendBucketName)"
-distribution_id="$(output CloudFrontDistributionId)"
-cloudfront_domain="$(output CloudFrontDomain)"
-instance_id="$(output ApplicationInstanceId)"
-web_origin="https://$cloudfront_domain"
-
-account_id="$(aws sts get-caller-identity --profile "$PROFILE" --query Account --output text)"
-aws ecr get-login-password --profile "$PROFILE" --region "$REGION" | docker login --username AWS --password-stdin "$account_id.dkr.ecr.$REGION.amazonaws.com"
-docker buildx build --platform linux/amd64 --push -t "$repository_uri:$IMAGE_TAG" .
-
-marketplace_shared_secret="${HIGHLEVEL_APP_SHARED_SECRET:-}"
-if [[ -z "$marketplace_shared_secret" ]]; then
-  marketplace_shared_secret="$(aws secretsmanager get-secret-value \
+  aws cloudformation deploy \
     --profile "$PROFILE" \
     --region "$REGION" \
+    --stack-name "$STACK_NAME" \
+    --template-file infra/aws/cloudformation.yml \
+    --capabilities CAPABILITY_NAMED_IAM \
+    --parameter-overrides \
+      ProjectName="$PROJECT_NAME" \
+      CloudFrontOriginFacingPrefixListId="$cloudfront_prefix_list" \
+    --tags Application="$PROJECT_NAME" ManagedBy=CloudFormation \
+    --no-fail-on-empty-changeset
+}
+
+load_stack_outputs() {
+  OUTPUTS="$(aws_cli cloudformation describe-stacks \
+    --stack-name "$STACK_NAME" \
+    --query 'Stacks[0].Outputs' \
+    --output json)"
+}
+
+output() {
+  jq -r --arg key "$1" '.[] | select(.OutputKey == $key) | .OutputValue' <<<"$OUTPUTS"
+}
+
+require_output() {
+  local value
+  value="$(output "$1")"
+  if [[ -z "$value" || "$value" == null ]]; then
+    echo "CloudFormation output is missing: $1" >&2
+    exit 1
+  fi
+  printf '%s' "$value"
+}
+
+ensure_release_tools() {
+  for executable in docker pnpm git; do
+    command -v "$executable" >/dev/null || {
+      echo "Missing required command: $executable" >&2
+      exit 1
+    }
+  done
+}
+
+run_checks() {
+  pnpm format:check
+  pnpm check
+}
+
+update_application_configuration() {
+  if [[ ! -f "$ENV_FILE" ]]; then
+    echo "Missing configuration file: $ENV_FILE" >&2
+    exit 1
+  fi
+
+  local secret_arn web_origin existing_json existing_shared_secret secret_file
+  secret_arn="$(require_output ApplicationSecretArn)"
+  web_origin="https://$(require_output CloudFrontDomain)"
+  existing_json="$(aws_cli secretsmanager get-secret-value \
     --secret-id "$secret_arn" \
     --query SecretString \
-    --output text | jq -r '.HIGHLEVEL_APP_SHARED_SECRET // empty')"
-fi
-if [[ -z "$marketplace_shared_secret" ]]; then
-  marketplace_shared_secret="$(openssl rand -hex 32)"
-  generated_marketplace_secret=true
-else
-  generated_marketplace_secret=false
-fi
+    --output text)"
+  existing_shared_secret="$(jq -r '.HIGHLEVEL_APP_SHARED_SECRET // empty' <<<"$existing_json")"
+  secret_file="$(mktemp)"
+  TEMP_FILES+=("$secret_file")
 
-secret_json="$(jq -n \
-  --arg imageTag "$IMAGE_TAG" \
-  --arg WEB_ORIGIN "$web_origin" \
-  --arg HIGHLEVEL_CLIENT_ID "$HIGHLEVEL_CLIENT_ID" \
-  --arg HIGHLEVEL_CLIENT_SECRET "$HIGHLEVEL_CLIENT_SECRET" \
-  --arg HIGHLEVEL_APP_ID "${HIGHLEVEL_APP_ID:-${HIGHLEVEL_CLIENT_ID%%-*}}" \
-  --arg HIGHLEVEL_REDIRECT_URI "$web_origin/api/leadconnector/oauth" \
-  --arg HIGHLEVEL_POST_INSTALL_REDIRECT_URI "$web_origin" \
-  --arg HIGHLEVEL_TOKEN_ENCRYPTION_KEY "$HIGHLEVEL_TOKEN_ENCRYPTION_KEY" \
-  --arg HIGHLEVEL_APP_SHARED_SECRET "$marketplace_shared_secret" \
-  --arg LLM_PROVIDER "$production_llm_provider" \
-  --arg LLM_PROVIDER_ID "${LLM_PROVIDER_ID:-openai}" \
-  --arg LLM_BASE_URL "${LLM_BASE_URL:-https://api.openai.com/v1}" \
-  --arg LLM_MODEL "${LLM_MODEL:-gpt-5.4}" \
-  --arg LLM_API_KEY "${LLM_API_KEY:-}" \
-  --arg LLM_STRUCTURED_OUTPUT_MODE "${LLM_STRUCTURED_OUTPUT_MODE:-json_schema}" \
-  --arg LLM_MAX_OUTPUT_TOKENS "${LLM_MAX_OUTPUT_TOKENS:-8192}" \
-  --arg LLM_REQUEST_TIMEOUT_MS "${LLM_REQUEST_TIMEOUT_MS:-180000}" \
-  --arg LLM_EXTRA_BODY_JSON "${LLM_EXTRA_BODY_JSON:-{}}" \
-  --arg ANALYSIS_CONCURRENCY "${ANALYSIS_CONCURRENCY:-2}" \
-  '$ARGS.named')"
+  EXISTING_HIGHLEVEL_APP_SHARED_SECRET="$existing_shared_secret" \
+    node --env-file="$ENV_FILE" infra/aws/render-application-secret.mjs "$web_origin" >"$secret_file"
+  aws_cli secretsmanager put-secret-value \
+    --secret-id "$secret_arn" \
+    --secret-string "file://$secret_file" >/dev/null
+}
 
-aws secretsmanager put-secret-value --profile "$PROFILE" --region "$REGION" --secret-id "$secret_arn" --secret-string "$secret_json" >/dev/null
+build_backend_image() {
+  ensure_release_tools
+  if [[ "${SKIP_CHECKS:-false}" != true ]]; then run_checks; fi
 
-pnpm --filter @copilot/web build
-aws s3 sync apps/web/dist "s3://$bucket" --profile "$PROFILE" --region "$REGION" --delete
-aws cloudfront create-invalidation --profile "$PROFILE" --distribution-id "$distribution_id" --paths '/*' >/dev/null
+  local repository_uri cache_repository_uri repository_name account_id commit image_tag
+  local existing_digest metadata_file image_reference
+  repository_uri="$(require_output ApplicationRepositoryUri)"
+  cache_repository_uri="$(require_output ApplicationBuildCacheRepositoryUri)"
+  repository_name="${repository_uri##*/}"
+  account_id="$(aws_cli sts get-caller-identity --query Account --output text)"
+  commit="$(git rev-parse --verify HEAD)"
 
-command_id="$(aws ssm send-command \
-  --profile "$PROFILE" \
-  --region "$REGION" \
-  --instance-ids "$instance_id" \
-  --document-name AWS-RunShellScript \
-  --parameters 'commands=["sudo /usr/local/bin/deploy-voice-agent"]' \
-  --query Command.CommandId \
-  --output text)"
-aws ssm wait command-executed --profile "$PROFILE" --region "$REGION" --command-id "$command_id" --instance-id "$instance_id"
-aws ssm get-command-invocation --profile "$PROFILE" --region "$REGION" --command-id "$command_id" --instance-id "$instance_id" --query '{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}' --output json
+  if [[ -n "$(git status --porcelain)" && "${ALLOW_DIRTY_BUILD:-false}" != true ]]; then
+    echo 'Refusing to publish an image from a dirty working tree. Commit the release or set ALLOW_DIRTY_BUILD=true explicitly.' >&2
+    exit 1
+  fi
+  image_tag="${IMAGE_TAG:-${commit:0:12}}"
 
-curl --fail --retry 18 --retry-delay 10 "$web_origin/api/health"
+  aws_cli ecr get-login-password |
+    docker login --username AWS --password-stdin "$account_id.dkr.ecr.$REGION.amazonaws.com"
+  existing_digest="$(aws_cli ecr describe-images \
+    --repository-name "$repository_name" \
+    --image-ids imageTag="$image_tag" \
+    --query 'imageDetails[0].imageDigest' \
+    --output text 2>/dev/null || true)"
 
-printf '\nDeployment complete\n'
-printf 'UI: %s\n' "$web_origin"
-printf 'Webhook: %s/api/leadconnector/webhook\n' "$web_origin"
-printf 'OAuth redirect: %s/api/leadconnector/oauth\n' "$web_origin"
-if [[ "$generated_marketplace_secret" == true ]]; then
-  printf 'A Marketplace Custom Page shared secret was generated in Secrets Manager. Retrieve it securely with:\n'
-  printf 'aws secretsmanager get-secret-value --profile %q --region %q --secret-id %q --query SecretString --output text | jq -r .HIGHLEVEL_APP_SHARED_SECRET\n' "$PROFILE" "$REGION" "$secret_arn"
-fi
+  if [[ -n "$existing_digest" && "$existing_digest" != None ]]; then
+    image_reference="$repository_uri@$existing_digest"
+    printf 'Reusing immutable image %s.\n' "$image_reference"
+  else
+    metadata_file="$(mktemp)"
+    TEMP_FILES+=("$metadata_file")
+    docker buildx build \
+      --platform linux/amd64 \
+      --push \
+      --tag "$repository_uri:$image_tag" \
+      --label "org.opencontainers.image.revision=$commit" \
+      --label "org.opencontainers.image.source=https://github.com/jatinjdev/highlevel-voice-ai-observability-copilot" \
+      --cache-from "type=registry,ref=$cache_repository_uri:buildcache" \
+      --cache-to "type=registry,ref=$cache_repository_uri:buildcache,mode=max,image-manifest=true,oci-mediatypes=true" \
+      --provenance=mode=max \
+      --sbom=true \
+      --metadata-file "$metadata_file" \
+      .
+    existing_digest="$(jq -r '."containerimage.digest"' "$metadata_file")"
+    image_reference="$repository_uri@$existing_digest"
+  fi
+
+  aws_cli ssm put-parameter \
+    --name "$(require_output RuntimeImageParameterName)" \
+    --type String \
+    --value "$image_reference" \
+    --overwrite >/dev/null
+  printf 'Published runtime image %s.\n' "$image_reference"
+}
+
+write_remote_configuration() {
+  local file="$1"
+  {
+    printf 'AWS_REGION=%q\n' "$REGION"
+    printf 'AWS_ACCOUNT_ID=%q\n' "$(aws_cli sts get-caller-identity --query Account --output text)"
+    printf 'APPLICATION_SECRET_ARN=%q\n' "$(require_output ApplicationSecretArn)"
+    printf 'DATABASE_SECRET_ARN=%q\n' "$(require_output DatabaseSecretArn)"
+    printf 'DATABASE_HOST=%q\n' "$(require_output DatabaseEndpoint)"
+    printf 'DATABASE_PORT=%q\n' 5432
+    printf 'RUNTIME_IMAGE_PARAMETER=%q\n' "$(require_output RuntimeImageParameterName)"
+    printf 'INGESTION_QUEUE_URL=%q\n' "$(require_output IngestionQueueUrl)"
+    printf 'ANALYSIS_QUEUE_URL=%q\n' "$(require_output AnalysisQueueUrl)"
+    printf 'LOG_GROUP_NAME=%q\n' "$(require_output ApplicationLogGroupName)"
+  } >"$file"
+}
+
+run_on_runtime_host() {
+  local mode="$1"
+  local instance_id script_payload config_file config_payload parameters command_id status
+  instance_id="$(require_output ApplicationInstanceId)"
+  config_file="$(mktemp)"
+  parameters="$(mktemp)"
+  TEMP_FILES+=("$config_file" "$parameters")
+  write_remote_configuration "$config_file"
+  script_payload="$(base64 <infra/aws/runtime-deploy.sh | tr -d '\n')"
+  config_payload="$(base64 <"$config_file" | tr -d '\n')"
+  jq -n \
+    --arg script "$script_payload" \
+    --arg config "$config_payload" \
+    --arg mode "$mode" \
+    '{commands: [
+      "sudo install -d -m 700 /etc/voice-ai-observability",
+      ("printf %s " + ($script | @sh) + " | base64 -d | sudo tee /usr/local/bin/deploy-voice-agent >/dev/null"),
+      "sudo chmod 700 /usr/local/bin/deploy-voice-agent",
+      ("printf %s " + ($config | @sh) + " | base64 -d | sudo tee /etc/voice-ai-observability/deployment.env >/dev/null"),
+      "sudo chmod 600 /etc/voice-ai-observability/deployment.env",
+      ("sudo /usr/local/bin/deploy-voice-agent " + ($mode | @sh))
+    ]}' >"$parameters"
+
+  command_id="$(aws_cli ssm send-command \
+    --instance-ids "$instance_id" \
+    --document-name AWS-RunShellScript \
+    --parameters "file://$parameters" \
+    --query Command.CommandId \
+    --output text)"
+
+  for _ in {1..120}; do
+    status="$(aws_cli ssm get-command-invocation \
+      --command-id "$command_id" \
+      --instance-id "$instance_id" \
+      --query Status \
+      --output text 2>/dev/null || true)"
+    case "$status" in
+      Success | Failed | Cancelled | TimedOut | Cancelling) break ;;
+      *) sleep 5 ;;
+    esac
+  done
+  aws_cli ssm get-command-invocation \
+    --command-id "$command_id" \
+    --instance-id "$instance_id" \
+    --query '{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}' \
+    --output json
+  if [[ "$status" != Success ]]; then
+    echo "Runtime command did not succeed (status: ${status:-unknown})." >&2
+    exit 1
+  fi
+}
+
+snapshot_database() {
+  local database_identifier snapshot_identifier
+  database_identifier="$(require_output DatabaseIdentifier)"
+  snapshot_identifier="${PROJECT_NAME}-predeploy-$(date -u +%Y%m%d%H%M%S)"
+  aws_cli rds create-db-snapshot \
+    --db-instance-identifier "$database_identifier" \
+    --db-snapshot-identifier "$snapshot_identifier" >/dev/null
+  aws_cli rds wait db-snapshot-available --db-snapshot-identifier "$snapshot_identifier"
+  printf 'Created pre-migration snapshot %s.\n' "$snapshot_identifier"
+}
+
+deploy_frontend() {
+  ensure_release_tools
+  local bucket distribution
+  bucket="$(require_output FrontendBucketName)"
+  distribution="$(require_output CloudFrontDistributionId)"
+  pnpm --filter @copilot/web build
+  aws s3 sync apps/web/dist/assets "s3://$bucket/assets" \
+    --profile "$PROFILE" --region "$REGION" --delete \
+    --cache-control 'public,max-age=31536000,immutable'
+  aws s3 sync apps/web/dist "s3://$bucket" \
+    --profile "$PROFILE" --region "$REGION" --delete \
+    --exclude 'assets/*' \
+    --cache-control 'no-cache,must-revalidate'
+  aws_cli cloudfront create-invalidation \
+    --distribution-id "$distribution" \
+    --paths '/' '/index.html' >/dev/null
+}
+
+release_backend() {
+  local migration_mode="$1"
+  build_backend_image
+  if [[ "$migration_mode" == true ]]; then
+    snapshot_database
+    run_on_runtime_host release-migrate
+  else
+    run_on_runtime_host release
+  fi
+  curl --fail --retry 18 --retry-delay 10 \
+    "https://$(require_output CloudFrontDomain)/api/health/ready"
+}
+
+case "$COMMAND" in
+  infra)
+    deploy_infrastructure
+    ;;
+  backend)
+    load_stack_outputs
+    release_backend false
+    ;;
+  backend-migrate)
+    load_stack_outputs
+    release_backend true
+    ;;
+  frontend)
+    load_stack_outputs
+    deploy_frontend
+    ;;
+  config)
+    load_stack_outputs
+    update_application_configuration
+    run_on_runtime_host "restart-$CONFIG_TARGET"
+    ;;
+  all)
+    ensure_release_tools
+    if [[ "${SKIP_CHECKS:-false}" != true ]]; then run_checks; fi
+    export SKIP_CHECKS=true
+    deploy_infrastructure
+    load_stack_outputs
+    update_application_configuration
+    release_backend true
+    deploy_frontend
+    ;;
+esac

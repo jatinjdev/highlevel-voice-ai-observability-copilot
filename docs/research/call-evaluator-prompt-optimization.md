@@ -32,10 +32,10 @@ a guarantee for every model, but it is strong support for a flat speaker-labelle
 
 On the existing five-turn project fixture:
 
-| Transcript representation | Characters | `cl100k_base` tokens |
-|---|---:|---:|
-| Minified JSON turn objects | 492 | 117 |
-| One line per turn with IDs | 340 | 85 |
+| Transcript representation  | Characters | `cl100k_base` tokens |
+| -------------------------- | ---------: | -------------------: |
+| Minified JSON turn objects |        492 |                  117 |
+| One line per turn with IDs |        340 |                   85 |
 
 The line representation is about 31% smaller by characters and 27% smaller by this tokenizer.
 The exact saving varies by tokenizer and transcript, so this is a local measurement rather

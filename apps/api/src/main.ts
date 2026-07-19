@@ -19,12 +19,14 @@ async function bootstrap(): Promise<void> {
   app.use(helmet());
   app.enableShutdownHooks();
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Voice AI Observability Copilot API')
-    .setDescription('Backend API for Voice AI call ingestion and analysis.')
-    .setVersion('0.1.0')
-    .build();
-  SwaggerModule.setup('api/docs', app, SwaggerModule.createDocument(app, swaggerConfig));
+  if (environment.NODE_ENV !== 'production') {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('Voice AI Observability Copilot API')
+      .setDescription('Backend API for Voice AI call ingestion and analysis.')
+      .setVersion('0.1.0')
+      .build();
+    SwaggerModule.setup('api/docs', app, SwaggerModule.createDocument(app, swaggerConfig));
+  }
 
   await app.listen(environment.PORT, '0.0.0.0');
 }

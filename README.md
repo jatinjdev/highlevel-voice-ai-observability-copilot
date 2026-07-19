@@ -10,7 +10,7 @@ Actions, call settings, transcription, speech, and other documented Voice AI sur
 apps/
   api/               Marketplace OAuth, webhooks, sessions, outbox, and dashboard API
   ingestion-worker/  Idempotent call normalization and historical-ingestion jobs
-  analysis-worker/   Versioned rubrics, deterministic checks, and structured LLM evals
+  analysis-worker/   Versioned criteria evaluation and linked recommendations
   web/               Vue 3 HighLevel Custom Page
 packages/
   contracts/         Versioned runtime-validated HTTP and event contracts
@@ -30,9 +30,10 @@ docs/architecture/   Architecture overview and decision records
    PostgreSQL rather than travelling through queue payloads.
 4. The ingestion worker claims the message idempotently, normalizes the call and
    action timestamps, then publishes an analysis request through its own outbox.
-5. The analysis worker leases the call, compiles an immutable agent-specific
-   rubric, runs deterministic checks and—when enabled—a schema-constrained OpenAI
-   evaluation, validates transcript evidence, and persists findings.
+5. The analysis worker leases the call, resolves the agent's active Success
+   Criteria, and evaluates each criterion independently as pass, fail,
+   not-applicable, or unknown. It validates cited transcript turns and creates a
+   paste-ready prompt recommendation only for an eligible failed criterion.
 6. The Vue Custom Page exchanges HighLevel's encrypted user context for a
    15-minute location-bound session and renders the unified dashboard.
 
@@ -71,14 +72,21 @@ gateway rather than a developer's interactive subscription.
 
 ## Useful commands
 
-| Command            | Purpose                                      |
-| ------------------ | -------------------------------------------- |
-| `pnpm dev`         | Run all development processes                |
-| `pnpm check`       | Lint, typecheck, test, and build everything  |
-| `pnpm db:generate` | Generate a migration from the Drizzle schema |
-| `pnpm db:migrate`  | Apply pending database migrations            |
-| `pnpm db:studio`   | Open Drizzle Studio                          |
+| Command                                                    | Purpose                                                             |
+| ---------------------------------------------------------- | ------------------------------------------------------------------- |
+| `pnpm dev`                                                 | Run all development processes                                       |
+| `pnpm check`                                               | Lint, typecheck, test, and build everything                         |
+| `pnpm db:generate`                                         | Generate a migration from the Drizzle schema                        |
+| `pnpm db:migrate`                                          | Apply pending database migrations                                   |
+| `pnpm db:studio`                                           | Open Drizzle Studio                                                 |
 | `pnpm --filter @copilot/api sync:location -- <locationId>` | Queue a convergent historical sync for one OAuth-installed Location |
+
+AWS releases are deliberately separated by change type. `infra` changes only
+CloudFormation, `backend` publishes and rolls out an immutable backend image,
+`backend-migrate` first snapshots and drains the database, `frontend` publishes
+only static assets, and `config <process>` restarts only the affected runtime.
+See [the AWS runbook](infra/aws/README.md) for the exact commands and rollback
+boundaries.
 
 ## Documentation
 
@@ -92,12 +100,16 @@ gateway rather than a developer's interactive subscription.
 - OAuth tokens are encrypted at rest with AES-256-GCM and rotated on refresh.
 - Webhook signatures are verified before any event is accepted.
 - Queue messages contain internal identifiers, not transcripts or credentials.
+- The public ALB accepts network traffic only from CloudFront and forwards requests
+  only when they carry the distribution's generated origin-verification header.
 - Production dashboard authorization comes from signed HighLevel user context;
   a caller-supplied `locationId` is never an authorization boundary.
 - Semantic analysis redacts common contact data and excludes raw action
   parameters before sending evidence to the model provider.
 
-The assignment environment is deployed on AWS with CloudFront/S3, an ALB-backed
-EC2 application host, private RDS PostgreSQL, SQS/DLQs, ECR, Secrets Manager,
-CloudWatch Logs, and SSM-only host administration. Remaining scale and operations
-work is kept explicit in `docs/IMPLEMENTATION_STATUS.md`.
+The assignment environment uses CloudFront/S3, an ALB-backed EC2 application
+host, private RDS PostgreSQL, SQS/DLQs, ECR, Secrets Manager, CloudWatch, and
+SSM-only host administration. The single host is a cost-conscious deployment
+boundary, not an application coupling: the API and workers have distinct
+commands, configuration, health behavior, queues, and resource limits. Remaining
+scale and operations work is explicit in `docs/IMPLEMENTATION_STATUS.md`.

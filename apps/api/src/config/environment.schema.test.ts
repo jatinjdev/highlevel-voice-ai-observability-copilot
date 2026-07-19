@@ -6,6 +6,7 @@ const OAUTH_ENVIRONMENT = {
   DATABASE_URL: 'postgresql://user:password@localhost:5432/database',
   HIGHLEVEL_CLIENT_ID: 'client-id',
   HIGHLEVEL_CLIENT_SECRET: 'client-secret',
+  HIGHLEVEL_APP_ID: 'app-id',
   HIGHLEVEL_REDIRECT_URI: 'https://example.com/api/leadconnector/oauth/callback',
   HIGHLEVEL_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
   HIGHLEVEL_APP_SHARED_SECRET: 'a-production-shared-secret',
