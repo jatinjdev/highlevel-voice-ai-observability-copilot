@@ -6,8 +6,9 @@ const styles = readFileSync('src/styles.css', 'utf8');
 describe('established observability layout', () => {
   it('keeps success criteria compact inside the fixed-height agent workspace', () => {
     expect(styles).toMatch(
-      /\.criteria-list article\s*\{[^}]*min-height:\s*82px;[^}]*padding:\s*12px 70px 26px 12px;/s,
+      /\.criteria-list article\s*\{[^}]*min-height:\s*92px;[^}]*padding:\s*12px 70px 30px 12px;/s,
     );
+    expect(styles).toMatch(/\.criteria-list p\s*\{[^}]*-webkit-line-clamp:\s*2;/s);
   });
 
   it('keeps recommendation cards at the established information density', () => {
