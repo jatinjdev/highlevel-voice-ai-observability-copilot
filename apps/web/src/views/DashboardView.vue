@@ -23,6 +23,21 @@ import {
   reanalyzeCall,
 } from '../lib/api';
 
+interface TurnAnnotation {
+  key: string;
+  criterionId: string;
+  title: string;
+  explanation: string;
+  turnId: string;
+  turnOrdinal: number;
+  text: string;
+}
+
+interface TurnSegment {
+  text: string;
+  annotationKey: string | null;
+}
+
 const route = useRoute();
 const router = useRouter();
 const dashboard = ref<ObservabilityDashboard | null>(null);
@@ -40,6 +55,8 @@ const addingCriterion = ref(false);
 const generatingCriterionId = ref<string | null>(null);
 const loadingMoreCalls = ref(false);
 const reanalysisMenuOpen = ref(false);
+const selectedAnnotationKey = ref<string | null>(null);
+const callSidebarOpen = ref(false);
 
 const view = computed(() => (call.value ? 'call' : agent.value ? 'agent' : 'dashboard'));
 const filteredAgents = computed(() => {
@@ -61,17 +78,30 @@ const visibleCalls = computed(() => {
 const failedResults = computed(
   () => call.value?.criterionResults.filter(({ result }) => result === 'fail') ?? [],
 );
-const orderedCriterionResults = computed(() => {
+const prioritizedCriterionResults = computed(() => {
   const order = { fail: 0, unknown: 1, pass: 2, not_applicable: 3 } as const;
   return [...(call.value?.criterionResults ?? [])].sort(
     (left, right) => order[left.result] - order[right.result],
   );
 });
-const highlightedTurnIds = computed(() => {
-  const result = call.value?.criterionResults.find(
-    ({ criterionId }) => criterionId === selectedCriterionId.value,
-  );
-  return new Set(result?.evidence.map(({ turnId }) => turnId) ?? []);
+const turnAnnotations = computed(() => {
+  const annotations = new Map<string, TurnAnnotation[]>();
+  for (const result of call.value?.criterionResults ?? []) {
+    if (result.result !== 'fail') continue;
+    for (const evidence of result.evidence) {
+      const annotation: TurnAnnotation = {
+        key: `criterion:${result.id}:${evidence.turnId}`,
+        criterionId: result.criterionId,
+        title: result.criterionName,
+        explanation: result.rationale,
+        turnId: evidence.turnId,
+        turnOrdinal: evidence.turnOrdinal,
+        text: evidence.text,
+      };
+      annotations.set(evidence.turnId, [...(annotations.get(evidence.turnId) ?? []), annotation]);
+    }
+  }
+  return annotations;
 });
 const highlightedActionIds = computed(() => {
   const result = call.value?.criterionResults.find(
@@ -97,6 +127,8 @@ async function loadRoute(): Promise<void> {
     const agentId = stringQuery(route.query.agentId);
     if (callId) {
       call.value = await getCallAnalysis(callId);
+      selectedAnnotationKey.value = null;
+      callSidebarOpen.value = false;
       agent.value = null;
       dashboard.value = null;
     } else if (agentId) {
@@ -294,19 +326,105 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
-function formatTurnTime(milliseconds: number | null): string | null {
-  if (milliseconds === null) return null;
-  const totalSeconds = Math.floor(milliseconds / 1_000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+function criterionVisualStatus(
+  result: CallAnalysisDetail['criterionResults'][number]['result'],
+): 'critical' | 'clear' | 'not_observable' | 'not_applicable' {
+  if (result === 'fail') return 'critical';
+  if (result === 'pass') return 'clear';
+  if (result === 'not_applicable') return 'not_applicable';
+  return 'not_observable';
 }
 
-function criterionStatusLabel(result: CallAnalysisDetail['criterionResults'][number]['result']) {
-  if (result === 'fail') return 'Flagged';
-  if (result === 'pass') return 'Passed';
-  if (result === 'not_applicable') return 'Not applicable';
-  return 'Unknown';
+function annotationForKey(key: string | null): TurnAnnotation | null {
+  if (!key) return null;
+  return [...turnAnnotations.value.values()].flat().find((item) => item.key === key) ?? null;
+}
+
+async function selectAnnotation(annotation: TurnAnnotation): Promise<void> {
+  selectedCriterionId.value = annotation.criterionId;
+  selectedAnnotationKey.value = annotation.key;
+  await nextTick();
+  document
+    .getElementById(`turn-${annotation.turnOrdinal}`)
+    ?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+}
+
+function selectAnnotationKey(key: string | null): void {
+  const annotation = annotationForKey(key);
+  if (annotation) void selectAnnotation(annotation);
+}
+
+function firstCriterionAnnotationKey(
+  result: CallAnalysisDetail['criterionResults'][number],
+): string | null {
+  const evidence = result.evidence[0];
+  return evidence ? `criterion:${result.id}:${evidence.turnId}` : null;
+}
+
+function selectResultEvidence(result: CallAnalysisDetail['criterionResults'][number]): void {
+  const key = firstCriterionAnnotationKey(result);
+  if (key) {
+    selectAnnotationKey(key);
+    return;
+  }
+  void selectCriterion(result.criterionId, undefined, result.actionEvidence[0]?.id);
+}
+
+function segmentsForTurn(turnId: string, text: string): TurnSegment[] {
+  const ranges = (turnAnnotations.value.get(turnId) ?? [])
+    .map((annotation) => {
+      const start = text.indexOf(annotation.text);
+      return { start, end: start + annotation.text.length, annotation };
+    })
+    .filter(({ start, end }) => start >= 0 && end > start)
+    .sort(
+      (left, right) =>
+        left.start - right.start ||
+        Number(right.annotation.key === selectedAnnotationKey.value) -
+          Number(left.annotation.key === selectedAnnotationKey.value),
+    );
+  if (!ranges.length) return [{ text, annotationKey: null }];
+  const segments: TurnSegment[] = [];
+  let cursor = 0;
+  for (const range of ranges) {
+    if (range.start < cursor) continue;
+    if (range.start > cursor)
+      segments.push({ text: text.slice(cursor, range.start), annotationKey: null });
+    segments.push({
+      text: text.slice(range.start, range.end),
+      annotationKey: range.annotation.key,
+    });
+    cursor = range.end;
+  }
+  if (cursor < text.length) segments.push({ text: text.slice(cursor), annotationKey: null });
+  return segments;
+}
+
+function annotationTooltip(key: string | null): string | undefined {
+  const annotation = annotationForKey(key);
+  return annotation ? `${annotation.title}\n${annotation.explanation}` : undefined;
+}
+
+function primaryAnnotationForTurn(turnId: string): TurnAnnotation | null {
+  return turnAnnotations.value.get(turnId)?.[0] ?? null;
+}
+
+function selectPrimaryAnnotation(turnId: string): void {
+  const annotation = primaryAnnotationForTurn(turnId);
+  if (annotation) void selectAnnotation(annotation);
+}
+
+function isSelectedEvidenceTurn(turnId: string): boolean {
+  return Boolean(
+    turnAnnotations.value.get(turnId)?.some(({ key }) => key === selectedAnnotationKey.value),
+  );
+}
+
+function isResultSelected(result: CallAnalysisDetail['criterionResults'][number]): boolean {
+  return (
+    annotationForKey(selectedAnnotationKey.value)?.criterionId === result.criterionId ||
+    selectedCriterionId.value === result.criterionId
+  );
 }
 
 function delay(milliseconds: number): Promise<void> {
@@ -517,120 +635,163 @@ function delay(milliseconds: number): Promise<void> {
             {{ call.call.agentName }}</button
           ><span>›</span><strong>{{ formatDate(call.call.createdAt) }}</strong>
         </nav>
-        <header class="page-heading call-heading">
-          <h1>Call analysis</h1>
-          <div class="call-facts">
-            <span>Duration: {{ formatDuration(call.call.durationSeconds) }}</span
-            ><span class="flagged-label">Flagged issues: {{ failedResults.length }}</span
-            ><button class="secondary-button" @click="runCallAnalysis">↻ Analyze again</button>
-          </div>
-        </header>
-        <div class="call-workspace">
-          <section class="data-panel transcript-panel">
-            <header class="compact-panel-header">
-              <div>
-                <h2>Transcript forensic view</h2>
-                <p>Select a flagged criterion to reveal its call evidence</p>
-              </div>
-            </header>
-            <div class="transcript internal-scroll">
-              <article
-                v-for="turn in call.call.turns"
-                :key="turn.id"
-                :data-turn-id="turn.id"
-                :data-highlighted="highlightedTurnIds.has(turn.id)"
-              >
-                <span class="speaker-avatar" :data-speaker="turn.speaker">{{
-                  turn.speaker === 'agent' ? 'AI' : 'C'
-                }}</span>
-                <div>
-                  <div class="transcript-speaker-line">
-                    <strong>{{
-                      turn.speaker === 'agent' ? call.call.agentName : 'Customer'
-                    }}</strong>
-                    <time v-if="formatTurnTime(turn.sourceStartMs)">{{
-                      formatTurnTime(turn.sourceStartMs)
-                    }}</time>
-                  </div>
-                  <p
-                    class="transcript-copy"
-                    :data-highlighted="highlightedTurnIds.has(turn.id)"
+        <div class="reference-call-layout">
+          <div class="call-primary-column">
+            <section class="data-panel call-transcript-reference">
+              <header class="compact-panel-header transcript-reference-header">
+                <h1>Transcript Forensic View</h1>
+                <div class="call-header-badges">
+                  <span>Duration: {{ formatDuration(call.call.durationSeconds) }}</span>
+                  <span :data-review="failedResults.length > 0"
+                    >Flagged issues: {{ failedResults.length }}</span
                   >
-                    {{ turn.text }}
-                  </p>
-                  <span v-if="highlightedTurnIds.has(turn.id)" class="evidence-label">
-                    Flagged evidence
-                  </span>
+                  <button type="button" @click="runCallAnalysis">↻ Rerun analysis</button>
                 </div>
-              </article>
-              <div v-if="call.call.actionEvents.length" class="call-actions">
-                <h3>Executed Call Actions</h3>
+              </header>
+              <div class="reference-transcript-list">
                 <article
-                  v-for="action in call.call.actionEvents"
-                  :key="action.id"
-                  class="call-action-row"
-                  :data-action-id="action.id"
-                  :data-highlighted="highlightedActionIds.has(action.id)"
+                  v-for="turn in call.call.turns"
+                  :id="`turn-${turn.ordinal}`"
+                  :key="turn.id"
+                  class="reference-transcript-turn"
+                  :data-speaker="turn.speaker"
+                  :data-selected-evidence="isSelectedEvidenceTurn(turn.id)"
                 >
-                  <span class="speaker-avatar" data-speaker="action">A</span>
-                  <div>
-                    <strong>{{ action.actionName || action.actionType || 'Call Action' }}</strong>
+                  <div class="reference-speaker-icon">
+                    {{ turn.speaker === 'agent' ? 'AI' : turn.speaker === 'customer' ? 'CU' : '?' }}
+                  </div>
+                  <div class="reference-turn-copy">
+                    <div class="reference-speaker-line">
+                      <strong>{{
+                        turn.speaker === 'agent'
+                          ? call.call.agentName
+                          : turn.speaker === 'customer'
+                            ? 'Customer'
+                            : 'Unknown speaker'
+                      }}</strong>
+                    </div>
                     <p>
-                      {{ action.actionType || 'Action' }} ·
-                      {{ action.outcome || 'Outcome unknown' }}
+                      <template
+                        v-for="(segment, index) in segmentsForTurn(turn.id, turn.text)"
+                        :key="`${turn.id}-${index}`"
+                        ><button
+                          v-if="segment.annotationKey"
+                          class="evidence-highlight"
+                          data-tone="critical"
+                          :aria-pressed="selectedAnnotationKey === segment.annotationKey"
+                          :title="annotationTooltip(segment.annotationKey)"
+                          type="button"
+                          @click="selectAnnotationKey(segment.annotationKey)"
+                        >
+                          {{ segment.text }}</button
+                        ><template v-else>{{ segment.text }}</template></template
+                      >
                     </p>
-                    <span v-if="highlightedActionIds.has(action.id)" class="evidence-label">
-                      Flagged evidence
-                    </span>
+                    <button
+                      v-if="primaryAnnotationForTurn(turn.id)"
+                      class="reference-turn-callout"
+                      data-tone="critical"
+                      type="button"
+                      @click="selectPrimaryAnnotation(turn.id)"
+                    >
+                      <span></span>{{ primaryAnnotationForTurn(turn.id)?.title }}
+                    </button>
                   </div>
                 </article>
+                <section v-if="call.call.actionEvents.length" class="reference-action-list">
+                  <h2>Executed Call Actions</h2>
+                  <article
+                    v-for="action in call.call.actionEvents"
+                    :key="action.id"
+                    class="reference-action-row"
+                    :data-action-id="action.id"
+                    :data-highlighted="highlightedActionIds.has(action.id)"
+                  >
+                    <div class="reference-speaker-icon">A</div>
+                    <div class="reference-turn-copy">
+                      <strong>{{ action.actionName || action.actionType || 'Call Action' }}</strong>
+                      <p>
+                        {{ action.actionType || 'Action' }} ·
+                        {{ action.outcome || 'Outcome unknown' }}
+                      </p>
+                    </div>
+                  </article>
+                </section>
               </div>
-            </div>
-          </section>
-          <aside class="call-context">
-            <section class="data-panel call-summary">
-              <header class="compact-panel-header">
-                <div><h2>Call summary</h2></div>
-              </header>
-              <p>{{ call.call.sourceSummary || 'No call summary was supplied.' }}</p>
             </section>
-            <section class="data-panel checklist-panel">
-              <header class="compact-panel-header">
-                <div>
-                  <h2>Success criteria</h2>
-                  <p>{{ failedResults.length }} flagged</p>
+          </div>
+
+          <button
+            class="call-sidebar-backdrop"
+            type="button"
+            aria-label="Close call details"
+            :data-open="callSidebarOpen"
+            @click="callSidebarOpen = false"
+          ></button>
+
+          <aside
+            id="call-analysis-sidebar"
+            class="call-reference-rail"
+            :data-open="callSidebarOpen"
+          >
+            <nav class="call-sidebar-strip" aria-label="Call detail sections">
+              <button type="button" @pointerdown="callSidebarOpen = true">Summary</button>
+              <button type="button" @pointerdown="callSidebarOpen = true">Sentiment</button>
+              <button type="button" @pointerdown="callSidebarOpen = true">Criteria</button>
+            </nav>
+            <div class="call-sidebar-header"><strong>Call details</strong></div>
+            <div class="call-sidebar-content">
+              <section class="data-panel reference-rail-card call-summary-reference">
+                <h2>Call summary</h2>
+                <p>{{ call.call.sourceSummary || 'Semantic analysis has not completed.' }}</p>
+                <dl>
+                  <div>
+                    <dt>Intent</dt>
+                    <dd>Not classified</dd>
+                  </div>
+                  <div>
+                    <dt>Outcome</dt>
+                    <dd>Not assessed</dd>
+                  </div>
+                </dl>
+              </section>
+
+              <section class="data-panel reference-rail-card call-sentiment-reference">
+                <h2>Call sentiment</h2>
+                <p>Sentiment is not part of the criteria-only call evaluation.</p>
+              </section>
+
+              <section class="data-panel reference-rail-card checklist-reference">
+                <h2>Success criteria checklist</h2>
+                <div v-if="prioritizedCriterionResults.length" class="checklist">
+                  <article
+                    v-for="result in prioritizedCriterionResults"
+                    :key="result.id"
+                    :data-status="criterionVisualStatus(result.result)"
+                    :data-selected="isResultSelected(result)"
+                  >
+                    <span class="check-icon">{{
+                      result.result === 'fail' ? '×' : result.result === 'pass' ? '✓' : '—'
+                    }}</span>
+                    <div>
+                      <strong>{{ result.criterionName }}</strong>
+                      <p>{{ result.rationale }}</p>
+                    </div>
+                    <button
+                      v-if="
+                        result.result === 'fail' &&
+                        (result.evidence.length || result.actionEvidence.length)
+                      "
+                      type="button"
+                      @click="selectResultEvidence(result)"
+                    >
+                      View<br />evidence
+                    </button>
+                  </article>
                 </div>
-              </header>
-              <div v-if="orderedCriterionResults.length" class="criteria-checklist internal-scroll">
-                <button
-                  v-for="result in orderedCriterionResults"
-                  :key="result.id"
-                  :data-result="result.result"
-                  :data-selected="selectedCriterionId === result.criterionId"
-                  :disabled="!result.evidence.length && !result.actionEvidence.length"
-                  @click="
-                    selectCriterion(
-                      result.criterionId,
-                      result.evidence[0]?.turnId,
-                      result.actionEvidence[0]?.id,
-                    )
-                  "
-                >
-                  <span class="criterion-state" :data-result="result.result">{{
-                    result.result === 'fail' ? '×' : '✓'
-                  }}</span>
-                  <span class="criterion-copy">
-                    <strong>{{ result.criterionName }}</strong>
-                    <span>{{ result.rationale }}</span>
-                  </span>
-                  <span class="criterion-status" :data-result="result.result">{{
-                    criterionStatusLabel(result.result)
-                  }}</span>
-                  <small v-if="result.result === 'fail'">View evidence</small>
-                </button>
-              </div>
-              <div v-else class="panel-empty">No criteria were evaluated for this call.</div>
-            </section>
+                <div v-else class="panel-empty">No criteria were evaluated for this call.</div>
+              </section>
+            </div>
           </aside>
         </div>
       </template>

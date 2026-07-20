@@ -142,15 +142,23 @@ describe('DashboardView', () => {
       '/?locationId=test&callId=1bfb4a89-e709-4f65-a5d0-905ff61cbd49',
     );
 
-    expect(wrapper.get('.call-summary').text()).toContain('damaged birthday cake');
-    expect(wrapper.get('.criteria-checklist').text()).toContain('Safe and trustworthy behavior');
-    expect(wrapper.text()).toContain('00:12');
+    expect(wrapper.get('.call-transcript-reference h1').text()).toBe('Transcript Forensic View');
+    expect(wrapper.get('.call-summary-reference').text()).toContain('damaged birthday cake');
+    expect(wrapper.get('.call-sentiment-reference').text()).toContain('Call sentiment');
+    expect(wrapper.get('.checklist-reference').text()).toContain('Safe and trustworthy behavior');
+    expect(wrapper.find('.call-reference-rail').exists()).toBe(true);
+    expect(wrapper.text()).not.toContain('00:12');
 
-    await wrapper.get('.criteria-checklist button[data-result="fail"]').trigger('click');
+    await wrapper.get('.checklist-reference button').trigger('click');
     await flushPromises();
 
-    expect(wrapper.get('.transcript-copy').attributes('data-highlighted')).toBe('true');
-    expect(wrapper.get('.evidence-label').text()).toContain('Flagged evidence');
+    expect(wrapper.get('.evidence-highlight').attributes('aria-pressed')).toBe('true');
+    expect(wrapper.get('.evidence-highlight').text()).toBe(
+      'You probably handled the box badly after delivery.',
+    );
+    expect(wrapper.get('.reference-turn-callout').text()).toContain(
+      'Safe and trustworthy behavior',
+    );
   });
 
   it('preserves the established agent workspace around the new criteria workflow', async () => {
@@ -209,12 +217,12 @@ describe('DashboardView', () => {
     const { wrapper } = await mountView(
       '/?locationId=test&callId=1bfb4a89-e709-4f65-a5d0-905ff61cbd49',
     );
-    const issue = wrapper.find('.criteria-checklist button[data-result="fail"]');
+    const issue = wrapper.find('.checklist-reference button');
     await issue.trigger('click');
     await flushPromises();
 
     expect(wrapper.text()).toContain('Executed Call Actions');
-    expect(wrapper.find('.call-action-row').attributes('data-highlighted')).toBe('true');
+    expect(wrapper.find('.reference-action-row').attributes('data-highlighted')).toBe('true');
   });
 });
 
