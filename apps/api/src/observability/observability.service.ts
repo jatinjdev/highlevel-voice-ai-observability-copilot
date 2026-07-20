@@ -11,28 +11,28 @@ import {
   type AnalysisBatchStatus,
   type CallAnalysisDetail,
   type ObservabilityDashboard,
-  type Recommendation,
 } from '@copilot/contracts';
 import {
-  agentConfigSnapshots,
+  agentRecommendations,
   analysisBatchItems,
   analysisBatches,
   callActionEvents,
   callAnalysisRuns,
   callTurns,
+  criterionResultActionEvidence,
   criterionResultEvidence,
   criterionResults,
   locations,
   messageOutbox,
-  recommendations,
+  recommendationGenerationStates,
   successCriteria,
-  successCriterionVersions,
+  voiceAgentConfigurations,
   voiceAgents,
   voiceCalls,
   webhookInbox,
 } from '@copilot/database';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, count, desc, eq, gte, inArray, isNull, lt, or, type SQL } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, lt, or } from 'drizzle-orm';
 import { createHash, randomUUID } from 'node:crypto';
 
 import { DatabaseService } from '../database/database.service';
@@ -67,16 +67,12 @@ export class ObservabilityService {
       .where(eq(locations.highLevelLocationId, locationId))
       .orderBy(voiceAgents.name);
     const summaries = await this.summarizeAgents(agents.map(({ id }) => id));
-
     return observabilityDashboardSchema.parse({
-      agents: agents.map((agent) => {
-        const aggregate = summaries.get(agent.id);
-        return {
-          ...agent,
-          analysisStatus: aggregate?.status ?? 'not_analyzed',
-          summary: aggregate?.summary ?? EMPTY_SUMMARY,
-        };
-      }),
+      agents: agents.map((agent) => ({
+        ...agent,
+        analysisStatus: summaries.get(agent.id)?.status ?? 'not_analyzed',
+        summary: summaries.get(agent.id)?.summary ?? EMPTY_SUMMARY,
+      })),
     });
   }
 
@@ -84,23 +80,31 @@ export class ObservabilityService {
     const agent = await this.loadAgent(locationId, agentId);
     const [configuration] = await this.databaseService.client
       .select()
-      .from(agentConfigSnapshots)
-      .where(and(eq(agentConfigSnapshots.agentId, agentId), isNull(agentConfigSnapshots.validTo)))
-      .orderBy(desc(agentConfigSnapshots.capturedAt))
+      .from(voiceAgentConfigurations)
+      .where(eq(voiceAgentConfigurations.agentId, agentId))
       .limit(1);
-    const [criteria, calls, recommendations, summaries] = await Promise.all([
+    const [criteria, calls, recommendations, summaries, statuses] = await Promise.all([
       this.loadCriteria(agentId),
       this.loadAgentCalls(agentId, { limit: 50 }),
       this.loadAgentRecommendations(agentId),
       this.summarizeAgents([agentId]),
+      this.loadRecommendationStatuses(agentId),
     ]);
-
     return agentAnalysisDetailSchema.parse({
       agent,
       summary: summaries.get(agentId)?.summary ?? EMPTY_SUMMARY,
-      activeConfiguration: configuration ? serializeConfiguration(configuration) : null,
+      configuration: configuration
+        ? {
+            currentPrompt: configuration.currentPrompt,
+            promptHash: configuration.promptHash,
+            syncStatus: configuration.syncStatus,
+            syncedAt: configuration.syncedAt?.toISOString() ?? null,
+            configuration: configuration.configuration,
+          }
+        : null,
       successCriteria: criteria,
       recommendations,
+      recommendationStatuses: statuses,
       calls: calls.items,
       nextCallCursor: calls.nextCursor,
       totalCallCount: calls.totalCount,
@@ -128,20 +132,10 @@ export class ObservabilityService {
         direction: voiceCalls.direction,
         sourceSummary: voiceCalls.sourceSummary,
         extractedData: voiceCalls.extractedData,
-        configId: agentConfigSnapshots.id,
-        configSource: agentConfigSnapshots.source,
-        configSourceHash: agentConfigSnapshots.sourceHash,
-        configCapturedAt: agentConfigSnapshots.capturedAt,
-        configuration: agentConfigSnapshots.configuration,
-        evidenceCapabilities: agentConfigSnapshots.evidenceCapabilities,
       })
       .from(voiceCalls)
       .innerJoin(voiceAgents, eq(voiceAgents.id, voiceCalls.agentId))
       .innerJoin(locations, eq(locations.id, voiceCalls.locationId))
-      .innerJoin(
-        agentConfigSnapshots,
-        eq(agentConfigSnapshots.id, voiceCalls.agentConfigSnapshotId),
-      )
       .where(and(eq(voiceCalls.id, callId), eq(locations.highLevelLocationId, locationId)))
       .limit(1);
     if (!row) throw new NotFoundException('Call was not found for this location.');
@@ -151,7 +145,7 @@ export class ObservabilityService {
       .from(callAnalysisRuns)
       .where(and(eq(callAnalysisRuns.callId, callId), eq(callAnalysisRuns.isCurrent, true)))
       .limit(1);
-    const [turns, actionEvents, results, recommendationRows] = await Promise.all([
+    const [turns, actionEvents, results] = await Promise.all([
       this.databaseService.client
         .select()
         .from(callTurns)
@@ -163,20 +157,12 @@ export class ObservabilityService {
         .where(eq(callActionEvents.callId, callId))
         .orderBy(callActionEvents.ordinal),
       analysis ? this.loadCriterionResults(analysis.id) : Promise.resolve([]),
-      analysis ? this.loadCallRecommendations(analysis.id) : Promise.resolve([]),
     ]);
 
     return callAnalysisDetailSchema.parse({
       call: {
-        id: row.id,
-        highLevelCallId: row.highLevelCallId,
-        agentId: row.agentId,
-        agentName: row.agentName,
+        ...row,
         createdAt: row.createdAt.toISOString(),
-        durationSeconds: row.durationSeconds,
-        direction: row.direction,
-        sourceSummary: row.sourceSummary,
-        extractedData: row.extractedData,
         turns: turns.map((turn) => ({
           id: turn.id,
           ordinal: turn.ordinal,
@@ -206,16 +192,7 @@ export class ObservabilityService {
             completedAt: analysis.completedAt?.toISOString() ?? null,
           }
         : null,
-      configuration: {
-        id: row.configId,
-        source: normalizeConfigSource(row.configSource),
-        sourceHash: row.configSourceHash,
-        capturedAt: row.configCapturedAt.toISOString(),
-        configuration: row.configuration,
-        evidenceCapabilities: row.evidenceCapabilities,
-      },
       criterionResults: results,
-      recommendations: recommendationRows,
     });
   }
 
@@ -236,7 +213,6 @@ export class ObservabilityService {
         .where(and(eq(voiceCalls.id, callId), eq(locations.highLevelLocationId, locationId)))
         .limit(1);
       if (!call) throw new NotFoundException('Call was not found for this location.');
-
       const requestId = randomUUID();
       const payload = { callId, requestId, requestedBy: 'observability-dashboard' };
       const [inbox] = await transaction
@@ -244,7 +220,7 @@ export class ObservabilityService {
         .values({
           idempotencyKey: `analysis-request:${requestId}`,
           eventType: 'InternalAnalysisRequested',
-          payloadSha256: createHash('sha256').update(JSON.stringify(payload)).digest('hex'),
+          payloadSha256: hash(JSON.stringify(payload)),
           payload,
           status: 'processed',
           processedAt: new Date(),
@@ -259,12 +235,7 @@ export class ObservabilityService {
         correlationId: requestId,
         companyId: call.companyId,
         locationId: call.locationId,
-        payload: {
-          callId,
-          agentId: call.agentId,
-          runReason: 'manual',
-          requestKey: requestId,
-        },
+        payload: { callId, agentId: call.agentId, runReason: 'manual', requestKey: requestId },
       });
       return { requestId, status: 'queued' as const };
     });
@@ -275,10 +246,8 @@ export class ObservabilityService {
     agentId: string,
     window: AgentReanalysisWindow,
   ): Promise<AgentReanalysisResponse> {
-    const duration = window === '24h' ? 24 * 60 * 60 * 1_000 : 7 * 24 * 60 * 60 * 1_000;
-    const cutoff = new Date(Date.now() - duration);
+    const cutoff = new Date(Date.now() - (window === '24h' ? 86_400_000 : 604_800_000));
     const batchRequestId = randomUUID();
-
     return this.databaseService.client.transaction(async (transaction) => {
       const [agent] = await transaction
         .select({
@@ -296,7 +265,6 @@ export class ObservabilityService {
         .from(voiceCalls)
         .where(and(eq(voiceCalls.agentId, agent.id), gte(voiceCalls.callCreatedAt, cutoff)))
         .orderBy(desc(voiceCalls.callCreatedAt));
-
       await transaction.insert(analysisBatches).values({
         id: batchRequestId,
         agentId: agent.id,
@@ -333,7 +301,7 @@ export class ObservabilityService {
               id: request.inboxId,
               idempotencyKey: `analysis-batch:${request.requestKey}`,
               eventType: 'InternalAnalysisRequested',
-              payloadSha256: createHash('sha256').update(JSON.stringify(payload)).digest('hex'),
+              payloadSha256: hash(JSON.stringify(payload)),
               payload,
               status: 'processed',
               processedAt: new Date(),
@@ -422,12 +390,9 @@ export class ObservabilityService {
   private async summarizeAgents(agentIds: string[]) {
     const summaries = new Map<
       string,
-      {
-        status: 'not_analyzed' | 'processing' | 'completed' | 'failed';
-        summary: AgentSummary;
-      }
+      { status: 'not_analyzed' | 'processing' | 'completed' | 'failed'; summary: AgentSummary }
     >();
-    if (agentIds.length === 0) return summaries;
+    if (!agentIds.length) return summaries;
     const analyses = await this.databaseService.client
       .select({
         id: callAnalysisRuns.id,
@@ -451,15 +416,10 @@ export class ObservabilityService {
           )
       : [];
     const failuresByAnalysis = countBy(failures, ({ analysisId }) => analysisId);
-
     for (const agentId of agentIds) {
       const rows = analyses.filter((analysis) => analysis.agentId === agentId);
-      if (rows.length === 0) continue;
+      if (!rows.length) continue;
       const completed = rows.filter(({ status }) => status === 'completed');
-      const flaggedIssueCount = rows.reduce(
-        (total, row) => total + (failuresByAnalysis.get(row.id) ?? 0),
-        0,
-      );
       summaries.set(agentId, {
         status: rows.some(({ status }) => status === 'processing')
           ? 'processing'
@@ -471,7 +431,10 @@ export class ObservabilityService {
           averageDurationSeconds: completed.length
             ? completed.reduce((total, row) => total + row.durationSeconds, 0) / completed.length
             : null,
-          flaggedIssueCount,
+          flaggedIssueCount: rows.reduce(
+            (total, row) => total + (failuresByAnalysis.get(row.id) ?? 0),
+            0,
+          ),
           callsWithFailures: rows.filter((row) => (failuresByAnalysis.get(row.id) ?? 0) > 0).length,
         },
       });
@@ -480,65 +443,42 @@ export class ObservabilityService {
   }
 
   private async loadCriteria(agentId: string): Promise<AgentAnalysisDetail['successCriteria']> {
-    const rows = await this.databaseService.client
-      .select({
-        id: successCriteria.id,
-        stableKey: successCriteria.stableKey,
-        origin: successCriteria.origin,
-        criterionClass: successCriteria.criterionClass,
-        lifecycleState: successCriteria.lifecycleState,
-        versionId: successCriterionVersions.id,
-        version: successCriterionVersions.version,
-        title: successCriterionVersions.title,
-        naturalLanguageRule: successCriterionVersions.naturalLanguageRule,
-        applicabilityDefinition: successCriterionVersions.applicabilityDefinition,
-        requiredEvidence: successCriterionVersions.requiredEvidence,
-      })
+    const criteria = await this.databaseService.client
+      .select()
       .from(successCriteria)
-      .innerJoin(
-        successCriterionVersions,
-        eq(successCriterionVersions.criterionId, successCriteria.id),
-      )
+      .where(eq(successCriteria.agentId, agentId))
+      .orderBy(successCriteria.createdAt);
+    if (!criteria.length) return [];
+    const results = await this.databaseService.client
+      .select({ criterionId: criterionResults.criterionId, result: criterionResults.result })
+      .from(criterionResults)
+      .innerJoin(callAnalysisRuns, eq(callAnalysisRuns.id, criterionResults.analysisRunId))
+      .innerJoin(voiceCalls, eq(voiceCalls.id, callAnalysisRuns.callId))
       .where(
-        and(eq(successCriteria.agentId, agentId), eq(successCriteria.lifecycleState, 'active')),
-      )
-      .orderBy(desc(successCriterionVersions.version));
-    const latest = new Map<string, (typeof rows)[number]>();
-    for (const row of rows) if (!latest.has(row.id)) latest.set(row.id, row);
-    const versions = [...latest.values()];
-    const versionIds = versions.map(({ versionId }) => versionId);
-    const results = versionIds.length
-      ? await this.databaseService.client
-          .select({
-            criterionVersionId: criterionResults.criterionVersionId,
-            result: criterionResults.result,
-          })
-          .from(criterionResults)
-          .innerJoin(callAnalysisRuns, eq(callAnalysisRuns.id, criterionResults.analysisRunId))
-          .innerJoin(voiceCalls, eq(voiceCalls.id, callAnalysisRuns.callId))
-          .where(
-            and(
-              eq(callAnalysisRuns.isCurrent, true),
-              eq(voiceCalls.agentId, agentId),
-              inArray(criterionResults.criterionVersionId, versionIds),
-            ),
-          )
-      : [];
+        and(
+          eq(callAnalysisRuns.isCurrent, true),
+          eq(voiceCalls.agentId, agentId),
+          inArray(
+            criterionResults.criterionId,
+            criteria.map(({ id }) => id),
+          ),
+        ),
+      );
     const distributions = new Map<string, ReturnType<typeof emptyDistribution>>();
     for (const result of results) {
-      const distribution = distributions.get(result.criterionVersionId) ?? emptyDistribution();
+      const distribution = distributions.get(result.criterionId) ?? emptyDistribution();
       if (result.result === 'pass') distribution.pass += 1;
       else if (result.result === 'fail') distribution.fail += 1;
       else if (result.result === 'not_applicable') distribution.notApplicable += 1;
       else distribution.unknown += 1;
-      distributions.set(result.criterionVersionId, distribution);
+      distributions.set(result.criterionId, distribution);
     }
-    return versions.map((row) => ({
-      ...row,
-      origin: normalizeOrigin(row.origin),
-      criterionClass: normalizeCriterionClass(row.criterionClass),
-      lifecycleState: normalizeCriterionLifecycle(row.lifecycleState),
-      resultDistribution: distributions.get(row.versionId) ?? emptyDistribution(),
+    return criteria.map((criterion) => ({
+      id: criterion.id,
+      name: criterion.name,
+      description: criterion.description,
+      source: criterion.source === 'default' ? ('default' as const) : ('user' as const),
+      resultDistribution: distributions.get(criterion.id) ?? emptyDistribution(),
     }));
   }
 
@@ -570,14 +510,13 @@ export class ObservabilityService {
       .where(and(eq(voiceCalls.agentId, agentId), pageCondition))
       .orderBy(desc(voiceCalls.callCreatedAt), desc(voiceCalls.id))
       .limit(page.limit + 1);
-    const hasNextPage = rows.length > page.limit;
     const pageRows = rows.slice(0, page.limit);
     const analysisIds = pageRows.flatMap(({ analysisId }) => (analysisId ? [analysisId] : []));
     const failures = analysisIds.length
       ? await this.databaseService.client
           .select({
             analysisId: criterionResults.analysisRunId,
-            criterionVersionId: criterionResults.criterionVersionId,
+            criterionId: criterionResults.criterionId,
           })
           .from(criterionResults)
           .where(
@@ -591,7 +530,7 @@ export class ObservabilityService {
     const criteriaByAnalysis = groupValues(
       failures,
       ({ analysisId }) => analysisId,
-      ({ criterionVersionId }) => criterionVersionId,
+      ({ criterionId }) => criterionId,
     );
     const [total] = await this.databaseService.client
       .select({ value: count() })
@@ -606,11 +545,12 @@ export class ObservabilityService {
         durationSeconds: row.durationSeconds,
         analysisStatus: normalizeCallAnalysisStatus(row.status),
         flaggedIssueCount: row.analysisId ? (counts.get(row.analysisId) ?? 0) : 0,
-        failedCriterionVersionIds: row.analysisId
+        failedCriterionIds: row.analysisId
           ? [...new Set(criteriaByAnalysis.get(row.analysisId) ?? [])]
           : [],
       })),
-      nextCursor: hasNextPage && last ? encodeCallCursor(last.createdAt, last.id) : null,
+      nextCursor:
+        rows.length > page.limit && last ? encodeCallCursor(last.createdAt, last.id) : null,
       totalCount: total?.value ?? 0,
     });
   }
@@ -622,162 +562,148 @@ export class ObservabilityService {
       .select({
         id: criterionResults.id,
         criterionId: successCriteria.id,
-        criterionVersionId: successCriterionVersions.id,
-        stableKey: successCriteria.stableKey,
-        title: successCriterionVersions.title,
-        origin: successCriteria.origin,
-        criterionClass: successCriteria.criterionClass,
+        criterionName: successCriteria.name,
+        criterionDescription: successCriteria.description,
         result: criterionResults.result,
         rationale: criterionResults.rationale,
       })
       .from(criterionResults)
-      .innerJoin(
-        successCriterionVersions,
-        eq(successCriterionVersions.id, criterionResults.criterionVersionId),
-      )
-      .innerJoin(successCriteria, eq(successCriteria.id, successCriterionVersions.criterionId))
+      .innerJoin(successCriteria, eq(successCriteria.id, criterionResults.criterionId))
       .where(eq(criterionResults.analysisRunId, analysisRunId));
-    const evidence = await this.loadEvidence(rows.map(({ id }) => id));
-    return rows.map((row) => ({
-      ...row,
-      origin: normalizeOrigin(row.origin),
-      criterionClass: normalizeCriterionClass(row.criterionClass),
-      result: normalizeCriterionResult(row.result),
-      evidence: evidence.get(row.id) ?? [],
-    }));
-  }
-
-  private async loadEvidence(resultIds: string[]) {
-    if (resultIds.length === 0) {
-      return new Map<string, CallAnalysisDetail['criterionResults'][number]['evidence']>();
-    }
-    const rows = await this.databaseService.client
-      .select({
-        resultId: criterionResultEvidence.criterionResultId,
-        turnId: callTurns.id,
-        turnOrdinal: callTurns.ordinal,
-        speaker: callTurns.speaker,
-        text: callTurns.text,
-      })
-      .from(criterionResultEvidence)
-      .innerJoin(callTurns, eq(callTurns.id, criterionResultEvidence.callTurnId))
-      .where(inArray(criterionResultEvidence.criterionResultId, resultIds));
-    return groupValues(
-      rows,
+    const resultIds = rows.map(({ id }) => id);
+    const [turnEvidence, actionEvidence] = resultIds.length
+      ? await Promise.all([
+          this.databaseService.client
+            .select({
+              resultId: criterionResultEvidence.criterionResultId,
+              turnId: callTurns.id,
+              turnOrdinal: callTurns.ordinal,
+              speaker: callTurns.speaker,
+              text: callTurns.text,
+            })
+            .from(criterionResultEvidence)
+            .innerJoin(callTurns, eq(callTurns.id, criterionResultEvidence.callTurnId))
+            .where(inArray(criterionResultEvidence.criterionResultId, resultIds)),
+          this.databaseService.client
+            .select({
+              resultId: criterionResultActionEvidence.criterionResultId,
+              id: callActionEvents.id,
+              ordinal: callActionEvents.ordinal,
+              actionName: callActionEvents.actionName,
+              outcome: callActionEvents.outcome,
+            })
+            .from(criterionResultActionEvidence)
+            .innerJoin(
+              callActionEvents,
+              eq(callActionEvents.id, criterionResultActionEvidence.callActionEventId),
+            )
+            .where(inArray(criterionResultActionEvidence.criterionResultId, resultIds)),
+        ])
+      : [[], []];
+    const turnsByResult = groupValues(
+      turnEvidence,
       ({ resultId }) => resultId,
-      (row) => ({
-        turnId: row.turnId,
-        turnOrdinal: row.turnOrdinal,
-        speaker: normalizeSpeaker(row.speaker),
-        text: row.text,
+      (item) => ({
+        turnId: item.turnId,
+        turnOrdinal: item.turnOrdinal,
+        speaker: normalizeSpeaker(item.speaker),
+        text: item.text,
       }),
     );
-  }
-
-  private async loadCallRecommendations(analysisRunId: string): Promise<Recommendation[]> {
-    const rows = await this.recommendationRows(eq(criterionResults.analysisRunId, analysisRunId));
-    const evidence = await this.loadEvidence(
-      rows.map(({ criterionResultId }) => criterionResultId),
+    const actionsByResult = groupValues(
+      actionEvidence,
+      ({ resultId }) => resultId,
+      (item) => ({
+        id: item.id,
+        ordinal: item.ordinal,
+        actionName: item.actionName,
+        outcome: item.outcome,
+      }),
     );
     return rows.map((row) => ({
-      ...serializeRecommendation(row),
-      scope: 'call' as const,
-      supportingCallCount: 1,
-      evidenceTurnIds: (evidence.get(row.criterionResultId) ?? []).map(({ turnId }) => turnId),
+      ...row,
+      result: normalizeCriterionResult(row.result),
+      evidence: turnsByResult.get(row.id) ?? [],
+      actionEvidence: actionsByResult.get(row.id) ?? [],
     }));
   }
 
-  private async loadAgentRecommendations(agentId: string): Promise<Recommendation[]> {
-    const rows = await this.recommendationRows(
-      and(eq(voiceCalls.agentId, agentId), eq(callAnalysisRuns.isCurrent, true)),
-    );
-    const groups = new Map<string, typeof rows>();
-    for (const row of rows) {
-      const key = `${row.criterionVersionId}:${row.targetId}`;
-      groups.set(key, [...(groups.get(key) ?? []), row]);
-    }
-    return [...groups.values()].map((group) => ({
-      ...serializeRecommendation(group[0]!),
-      scope: 'agent' as const,
-      supportingCallCount: new Set(group.map(({ callId }) => callId)).size,
-      evidenceTurnIds: [],
-    }));
-  }
-
-  private recommendationRows(condition: SQL | undefined) {
-    return this.databaseService.client
+  private async loadAgentRecommendations(
+    agentId: string,
+  ): Promise<AgentAnalysisDetail['recommendations']> {
+    const recommendations = await this.databaseService.client
       .select({
-        id: recommendations.id,
-        criterionResultId: recommendations.criterionResultId,
-        criterionId: successCriteria.id,
-        criterionVersionId: successCriterionVersions.id,
-        callId: voiceCalls.id,
-        targetId: recommendations.targetId,
-        type: recommendations.type,
-        title: recommendations.title,
-        reason: recommendations.reason,
-        proposedChange: recommendations.proposedChange,
-        uiPath: recommendations.uiPath,
+        id: agentRecommendations.id,
+        criterionId: agentRecommendations.criterionId,
+        criterionName: successCriteria.name,
+        headline: agentRecommendations.headline,
+        explanation: agentRecommendations.explanation,
+        promptAddition: agentRecommendations.promptAddition,
+        sampledFailureCount: agentRecommendations.sampledFailureCount,
+        generatedAt: agentRecommendations.generatedAt,
       })
-      .from(recommendations)
-      .innerJoin(criterionResults, eq(criterionResults.id, recommendations.criterionResultId))
+      .from(agentRecommendations)
+      .innerJoin(successCriteria, eq(successCriteria.id, agentRecommendations.criterionId))
       .innerJoin(
-        successCriterionVersions,
-        eq(successCriterionVersions.id, criterionResults.criterionVersionId),
+        voiceAgentConfigurations,
+        eq(voiceAgentConfigurations.agentId, agentRecommendations.agentId),
       )
-      .innerJoin(successCriteria, eq(successCriteria.id, successCriterionVersions.criterionId))
+      .where(
+        and(
+          eq(agentRecommendations.agentId, agentId),
+          eq(agentRecommendations.promptHash, voiceAgentConfigurations.promptHash),
+        ),
+      )
+      .orderBy(desc(agentRecommendations.generatedAt));
+    const failures = await this.databaseService.client
+      .select({ criterionId: criterionResults.criterionId })
+      .from(criterionResults)
       .innerJoin(callAnalysisRuns, eq(callAnalysisRuns.id, criterionResults.analysisRunId))
       .innerJoin(voiceCalls, eq(voiceCalls.id, callAnalysisRuns.callId))
-      .where(condition)
-      .orderBy(desc(recommendations.createdAt));
+      .where(
+        and(
+          eq(voiceCalls.agentId, agentId),
+          eq(callAnalysisRuns.isCurrent, true),
+          eq(criterionResults.result, 'fail'),
+        ),
+      );
+    const failureCounts = countBy(failures, ({ criterionId }) => criterionId);
+    return recommendations.map((item) => ({
+      ...item,
+      affectedCallCount: failureCounts.get(item.criterionId) ?? 0,
+      generatedAt: item.generatedAt.toISOString(),
+    }));
   }
-}
 
-function serializeRecommendation(row: {
-  id: string;
-  criterionId: string;
-  criterionVersionId: string;
-  targetId: string;
-  type: string;
-  title: string;
-  reason: string;
-  proposedChange: string;
-  uiPath: string | null;
-}) {
-  return {
-    id: row.id,
-    criterionId: row.criterionId,
-    criterionVersionId: row.criterionVersionId,
-    targetId: row.targetId,
-    type: 'prompt' as const,
-    title: row.title,
-    reason: row.reason,
-    proposedChange: row.proposedChange,
-    uiPath: row.uiPath,
-  };
-}
-
-function serializeConfiguration(snapshot: typeof agentConfigSnapshots.$inferSelect) {
-  return {
-    id: snapshot.id,
-    source: normalizeConfigSource(snapshot.source),
-    sourceHash: snapshot.sourceHash,
-    capturedAt: snapshot.capturedAt.toISOString(),
-    configuration: snapshot.configuration,
-    evidenceCapabilities: snapshot.evidenceCapabilities,
-  };
+  private async loadRecommendationStatuses(
+    agentId: string,
+  ): Promise<AgentAnalysisDetail['recommendationStatuses']> {
+    const rows = await this.databaseService.client
+      .select({
+        criterionId: recommendationGenerationStates.criterionId,
+        status: recommendationGenerationStates.status,
+        lastError: recommendationGenerationStates.lastError,
+        requestedAt: recommendationGenerationStates.requestedAt,
+      })
+      .from(recommendationGenerationStates)
+      .where(eq(recommendationGenerationStates.agentId, agentId));
+    return rows.map((row) => ({
+      criterionId: row.criterionId,
+      status: normalizeRecommendationStatus(row.status),
+      lastError: row.lastError,
+      requestedAt: row.requestedAt.toISOString(),
+    }));
+  }
 }
 
 function emptyDistribution() {
   return { pass: 0, fail: 0, notApplicable: 0, unknown: 0 };
 }
-
 function countBy<T>(values: T[], key: (value: T) => string): Map<string, number> {
   const counts = new Map<string, number>();
   for (const value of values) counts.set(key(value), (counts.get(key(value)) ?? 0) + 1);
   return counts;
 }
-
 function groupValues<T, K, V>(values: T[], key: (value: T) => K, project: (value: T) => V) {
   const groups = new Map<K, V[]>();
   for (const value of values) {
@@ -786,13 +712,11 @@ function groupValues<T, K, V>(values: T[], key: (value: T) => K, project: (value
   }
   return groups;
 }
-
 function encodeCallCursor(createdAt: Date, id: string): string {
   return Buffer.from(JSON.stringify({ createdAt: createdAt.toISOString(), id })).toString(
     'base64url',
   );
 }
-
 function decodeCallCursor(value: string): { createdAt: Date; id: string } {
   try {
     const decoded = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as {
@@ -808,39 +732,28 @@ function decodeCallCursor(value: string): { createdAt: Date; id: string } {
     throw new BadRequestException('Invalid call-page cursor.');
   }
 }
-
 function normalizeCallAnalysisStatus(status: string | null) {
   return status === 'processing' || status === 'completed' || status === 'failed'
     ? status
     : ('queued' as const);
 }
-
 function normalizeSpeaker(value: string): 'agent' | 'customer' | 'unknown' {
   return value === 'agent' || value === 'customer' ? value : 'unknown';
 }
-
-function normalizeConfigSource(value: string) {
-  return value === 'fixture' || value === 'user_supplemented' ? value : ('highlevel_api' as const);
-}
-
-function normalizeOrigin(value: string) {
-  return value === 'prompt_generated' || value === 'user_defined' || value === 'configuration'
-    ? value
-    : ('universal' as const);
-}
-
-function normalizeCriterionClass(value: string) {
-  return value === 'adherence' || value === 'safety' || value === 'diagnostic'
-    ? value
-    : ('outcome' as const);
-}
-
-function normalizeCriterionLifecycle(value: string) {
-  return value === 'active' || value === 'retired' ? value : ('draft' as const);
-}
-
 function normalizeCriterionResult(value: string) {
   return value === 'pass' || value === 'fail' || value === 'not_applicable'
     ? value
     : ('unknown' as const);
+}
+function normalizeRecommendationStatus(value: string) {
+  return value === 'queued' ||
+    value === 'processing' ||
+    value === 'completed' ||
+    value === 'not_needed' ||
+    value === 'failed'
+    ? value
+    : ('idle' as const);
+}
+function hash(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
 }

@@ -1,15 +1,17 @@
 import type { PipelineSummary, PipelineSyncResponse } from '@copilot/contracts';
 import { Injectable } from '@nestjs/common';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 
 import { DatabaseService } from '../database/database.service';
 import {
-  agentConfigSnapshots,
+  agentRecommendations,
   callAnalysisRuns,
   locations,
   messageOutbox,
+  recommendationGenerationStates,
   voiceAgents,
+  voiceAgentConfigurations,
   voiceCalls,
   webhookInbox,
 } from '../database/schema';
@@ -59,6 +61,15 @@ export class PipelineService {
       this.highLevelClient.get<HighLevelAgentPage>(locationId, '/voice-ai/agents'),
       this.highLevelClient.get<HighLevelCallPage>(locationId, '/voice-ai/dashboard/call-logs'),
     ]);
+    const agents: HighLevelAgent[] = [];
+    for (const agent of agentPage.agents) {
+      agents.push(
+        await this.highLevelClient.get<HighLevelAgent>(
+          locationId,
+          `/voice-ai/agents/${encodeURIComponent(agent.id)}`,
+        ),
+      );
+    }
 
     const [tenantLocation] = await this.databaseService.client
       .insert(locations)
@@ -70,7 +81,7 @@ export class PipelineService {
       .returning({ id: locations.id, companyId: locations.companyId });
     if (!tenantLocation) throw new Error(`Failed to resolve tenant location ${locationId}.`);
 
-    for (const agent of agentPage.agents) {
+    for (const agent of agents) {
       await this.databaseService.client.transaction(async (transaction) => {
         const [persistedAgent] = await transaction
           .insert(voiceAgents)
@@ -86,35 +97,45 @@ export class PipelineService {
           .returning({ id: voiceAgents.id });
         if (!persistedAgent) throw new Error(`Failed to persist Voice Agent ${agent.id}.`);
 
-        const configuration = { raw: agent, agentPrompt: agent.agentPrompt ?? null };
-        const sourceHash = createHash('sha256').update(JSON.stringify(configuration)).digest('hex');
-        const [existing] = await transaction
-          .select({ id: agentConfigSnapshots.id })
-          .from(agentConfigSnapshots)
-          .where(
-            and(
-              eq(agentConfigSnapshots.agentId, persistedAgent.id),
-              eq(agentConfigSnapshots.sourceHash, sourceHash),
-            ),
-          )
+        const currentPrompt = agent.agentPrompt ?? null;
+        const configuration = { raw: agent };
+        const promptHash = currentPrompt
+          ? createHash('sha256').update(currentPrompt).digest('hex')
+          : null;
+        const [previousConfiguration] = await transaction
+          .select({ promptHash: voiceAgentConfigurations.promptHash })
+          .from(voiceAgentConfigurations)
+          .where(eq(voiceAgentConfigurations.agentId, persistedAgent.id))
           .limit(1);
-        if (existing) return;
         await transaction
-          .update(agentConfigSnapshots)
-          .set({ validTo: new Date() })
-          .where(
-            and(
-              eq(agentConfigSnapshots.agentId, persistedAgent.id),
-              isNull(agentConfigSnapshots.validTo),
-            ),
-          );
-        await transaction.insert(agentConfigSnapshots).values({
-          agentId: persistedAgent.id,
-          sourceHash,
-          source: 'highlevel_api',
-          configuration,
-          evidenceCapabilities: inferAgentEvidenceCapabilities(agent),
-        });
+          .insert(voiceAgentConfigurations)
+          .values({
+            agentId: persistedAgent.id,
+            currentPrompt,
+            promptHash,
+            configuration,
+            syncStatus: 'synced',
+            syncedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: voiceAgentConfigurations.agentId,
+            set: {
+              currentPrompt,
+              promptHash,
+              configuration,
+              syncStatus: 'synced',
+              syncedAt: new Date(),
+              updatedAt: new Date(),
+            },
+          });
+        if (previousConfiguration?.promptHash && previousConfiguration.promptHash !== promptHash) {
+          await transaction
+            .delete(agentRecommendations)
+            .where(eq(agentRecommendations.agentId, persistedAgent.id));
+          await transaction
+            .delete(recommendationGenerationStates)
+            .where(eq(recommendationGenerationStates.agentId, persistedAgent.id));
+        }
       });
     }
 
@@ -154,7 +175,7 @@ export class PipelineService {
 
     return {
       ...(await this.getSummary(locationId)),
-      syncedAgents: agentPage.agents.length,
+      syncedAgents: agents.length,
       syncedCalls: callPage.callLogs.length,
     };
   }
@@ -236,17 +257,4 @@ export class PipelineService {
       })),
     };
   }
-}
-
-function inferAgentEvidenceCapabilities(agent: HighLevelAgent): Record<string, boolean> {
-  const serialized = JSON.stringify(agent).toLowerCase();
-  return {
-    transcript: true,
-    timestamps: false,
-    audio: false,
-    configuredActions: /action|tool/.test(serialized),
-    knowledgeBase: /knowledge|kb/.test(serialized),
-    transcriptionConfiguration: /transcri|keyword|pronunciation|stt/.test(serialized),
-    speechConfiguration: /voice|speech|interruption|temperature|noise/.test(serialized),
-  };
 }

@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 
 import { AnalysisService } from './analysis.service';
+import { RecommendationService } from './recommendation.service';
 
 export const ANALYSIS_EVENT_CONSUMER = Symbol('ANALYSIS_EVENT_CONSUMER');
 
@@ -19,6 +20,7 @@ export class AnalysisConsumerService implements OnApplicationBootstrap, OnApplic
   constructor(
     @Inject(ANALYSIS_EVENT_CONSUMER) private readonly consumer: DomainEventConsumer,
     private readonly analysisService: AnalysisService,
+    private readonly recommendationService: RecommendationService,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -46,11 +48,17 @@ export class AnalysisConsumerService implements OnApplicationBootstrap, OnApplic
 
   private async handle(delivery: DomainEventDelivery): Promise<void> {
     try {
-      if (delivery.event.type !== 'call.analysis.requested') {
-        throw new Error(`Analysis worker cannot handle event ${delivery.event.type}.`);
+      if (delivery.event.type === 'call.analysis.requested') {
+        const result = await this.analysisService.analyze(delivery.event);
+        if (result !== 'busy') await delivery.acknowledge();
+        return;
       }
-      const result = await this.analysisService.analyze(delivery.event);
-      if (result !== 'busy') await delivery.acknowledge();
+      if (delivery.event.type === 'criterion.recommendation.requested') {
+        await this.recommendationService.generate(delivery.event);
+        await delivery.acknowledge();
+        return;
+      }
+      throw new Error(`Analysis worker cannot handle event ${delivery.event.type}.`);
     } catch (error) {
       this.logger.error(
         `Message ${delivery.providerMessageId} failed and will be retried.`,

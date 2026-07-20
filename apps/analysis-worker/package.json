@@ -9,8 +9,7 @@
     "lint": "eslint src",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "preview:evaluator-request": "nest build && node dist/development/print-call-evaluation-request.js",
-    "eval:corpus": "RUN_LIVE_EVALS=1 EVAL_REPORT_PATH=evals/results/latest.json vitest run src/eval-corpus.test.ts --reporter=verbose"
+    "preview:evaluator-request": "nest build && node dist/development/print-call-evaluation-request.js"
   },
   "dependencies": {
     "@copilot/contracts": "workspace:*",

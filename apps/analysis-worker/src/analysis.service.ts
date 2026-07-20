@@ -1,15 +1,14 @@
 import type { CallAnalysisRequestedEvent } from '@copilot/contracts';
 import {
-  agentConfigSnapshots,
   analysisBatchItems,
   analysisBatches,
   callActionEvents,
   callAnalysisRuns,
   callTurns,
+  criterionResultActionEvidence,
   criterionResultEvidence,
   criterionResults,
   processedMessages,
-  recommendations,
   voiceAgents,
   voiceCalls,
 } from '@copilot/database';
@@ -17,13 +16,13 @@ import { Injectable } from '@nestjs/common';
 import { and, desc, eq, ne } from 'drizzle-orm';
 import { createHash, randomUUID } from 'node:crypto';
 
-import { AnalysisReleaseService, type ResolvedAnalysisRelease } from './analysis-release.service';
-import { CallAnalyzer, type CallAnalysisOutput } from './call-analyzer';
+import { CallAnalyzer } from './call-analyzer';
 import { CriteriaService } from './criteria.service';
 import { WorkerDatabaseService } from './database.service';
-import type { CallEvaluationInput } from './evaluation.types';
+import type { CallEvaluationInput, CriterionEvaluation } from './evaluation.types';
 
-const CONSUMER_NAME = 'analysis-worker-v4';
+const CONSUMER_NAME = 'analysis-worker-v5';
+const EVALUATOR_VERSION = 'criteria-checklist-v1';
 const ANALYSIS_LEASE_MS = 5 * 60_000;
 
 interface AnalysisClaim {
@@ -37,53 +36,51 @@ export class AnalysisService {
     private readonly databaseService: WorkerDatabaseService,
     private readonly criteriaService: CriteriaService,
     private readonly callAnalyzer: CallAnalyzer,
-    private readonly analysisReleaseService: AnalysisReleaseService,
   ) {}
 
   async analyze(event: CallAnalysisRequestedEvent): Promise<'processed' | 'duplicate' | 'busy'> {
     const locationId = event.tenant.locationId;
     if (!locationId) throw new Error('Call analysis event has no location tenant.');
 
-    const record = await this.loadInput(event.data.callId, event.data.agentId);
-    if (record.locationId !== locationId) {
+    const record = await this.loadCall(event.data.callId, event.data.agentId);
+    if (record.locationId !== locationId)
       throw new Error('Call location does not match the queue tenant.');
-    }
 
-    const criterionSet = await this.criteriaService.resolve(record.agentId, record.configuration);
-    const analysisRelease = await this.analysisReleaseService.resolve(this.callAnalyzer.runtime);
+    const criteria = await this.criteriaService.listForEvaluation(record.agentId);
+
     const input: CallEvaluationInput = {
       callId: record.callId,
       agentId: record.agentId,
       durationSeconds: record.durationSeconds,
-      configuration: record.configuration,
-      criteria: criterionSet.criteria,
+      criteria,
       turns: record.turns,
       actionEvents: record.actionEvents,
     };
     const inputFingerprint = fingerprint({
-      callId: input.callId,
       transcript: input.turns.map(({ ordinal, speaker, text }) => ({ ordinal, speaker, text })),
-      config: record.configSourceHash,
-      criteria: criterionSet.fingerprint,
-      analysisRelease: analysisRelease.releaseKey,
+      actions: input.actionEvents.map(({ ordinal, actionName, outcome, resultSummary }) => ({
+        ordinal,
+        actionName,
+        outcome,
+        resultSummary,
+      })),
+      criteria,
+      evaluatorVersion: EVALUATOR_VERSION,
     });
-    const executionKey = executionKeyFor(event, inputFingerprint);
     const claim = await this.claim({
       callId: record.callId,
-      configSnapshotId: record.configSnapshotId,
-      criterionSetId: criterionSet.id,
-      analysisReleaseId: analysisRelease.id,
       inputFingerprint,
-      executionKey,
+      executionKey: executionKeyFor(event, inputFingerprint),
       runReason: event.data.runReason,
-      evaluatorVersion: analysisRelease.definition.evaluatorVersion,
     });
     if (claim === 'completed') return 'duplicate';
     if (claim === 'busy') return 'busy';
 
     try {
-      const output = await this.callAnalyzer.analyze(input);
-      await this.complete(event, claim, input, output, analysisRelease);
+      const evaluation = criteria.length
+        ? await this.callAnalyzer.analyze(input)
+        : { criterionResults: [] };
+      await this.complete(event, claim, input, evaluation);
       return 'processed';
     } catch (error) {
       await this.fail(event, claim.analysisId, claim.leaseToken, error);
@@ -91,49 +88,44 @@ export class AnalysisService {
     }
   }
 
-  private async loadInput(callId: string, agentId: string) {
+  private async loadCall(callId: string, agentId: string) {
     const [record] = await this.databaseService.client
       .select({
         callId: voiceCalls.id,
         agentId: voiceAgents.id,
         locationId: voiceCalls.locationId,
-        configSnapshotId: agentConfigSnapshots.id,
-        configSourceHash: agentConfigSnapshots.sourceHash,
-        configuration: agentConfigSnapshots.configuration,
         durationSeconds: voiceCalls.durationSeconds,
       })
       .from(voiceCalls)
       .innerJoin(voiceAgents, eq(voiceCalls.agentId, voiceAgents.id))
-      .innerJoin(
-        agentConfigSnapshots,
-        eq(voiceCalls.agentConfigSnapshotId, agentConfigSnapshots.id),
-      )
       .where(and(eq(voiceCalls.id, callId), eq(voiceAgents.id, agentId)))
       .limit(1);
     if (!record) throw new Error(`Call ${callId} and its agent could not be loaded.`);
 
-    const turns = await this.databaseService.client
-      .select({
-        id: callTurns.id,
-        ordinal: callTurns.ordinal,
-        speaker: callTurns.speaker,
-        text: callTurns.text,
-      })
-      .from(callTurns)
-      .where(eq(callTurns.callId, callId))
-      .orderBy(callTurns.ordinal);
-    const actionEvents = await this.databaseService.client
-      .select({
-        id: callActionEvents.id,
-        ordinal: callActionEvents.ordinal,
-        actionType: callActionEvents.actionType,
-        actionName: callActionEvents.actionName,
-        outcome: callActionEvents.outcome,
-        resultSummary: callActionEvents.resultSummary,
-      })
-      .from(callActionEvents)
-      .where(eq(callActionEvents.callId, callId))
-      .orderBy(callActionEvents.ordinal);
+    const [turns, actionEvents] = await Promise.all([
+      this.databaseService.client
+        .select({
+          id: callTurns.id,
+          ordinal: callTurns.ordinal,
+          speaker: callTurns.speaker,
+          text: callTurns.text,
+        })
+        .from(callTurns)
+        .where(eq(callTurns.callId, callId))
+        .orderBy(callTurns.ordinal),
+      this.databaseService.client
+        .select({
+          id: callActionEvents.id,
+          ordinal: callActionEvents.ordinal,
+          actionType: callActionEvents.actionType,
+          actionName: callActionEvents.actionName,
+          outcome: callActionEvents.outcome,
+          resultSummary: callActionEvents.resultSummary,
+        })
+        .from(callActionEvents)
+        .where(eq(callActionEvents.callId, callId))
+        .orderBy(callActionEvents.ordinal),
+    ]);
 
     return {
       ...record,
@@ -147,13 +139,9 @@ export class AnalysisService {
 
   private claim(input: {
     callId: string;
-    configSnapshotId: string;
-    criterionSetId: string;
-    analysisReleaseId: string;
     inputFingerprint: string;
     executionKey: string;
     runReason: CallAnalysisRequestedEvent['data']['runReason'];
-    evaluatorVersion: string;
   }): Promise<AnalysisClaim | 'completed' | 'busy'> {
     return this.databaseService.client.transaction(async (transaction) => {
       await transaction
@@ -181,9 +169,8 @@ export class AnalysisService {
         existing?.status === 'processing' &&
         existing.leasedUntil &&
         existing.leasedUntil > new Date()
-      ) {
+      )
         return 'busy';
-      }
 
       let analysisId = existing?.id;
       if (!analysisId) {
@@ -197,14 +184,11 @@ export class AnalysisService {
           .insert(callAnalysisRuns)
           .values({
             callId: input.callId,
-            configSnapshotId: input.configSnapshotId,
-            criterionSetId: input.criterionSetId,
-            analysisReleaseId: input.analysisReleaseId,
             runSequence: (latest?.runSequence ?? 0) + 1,
             runReason: latest ? input.runReason : 'initial',
             inputFingerprint: input.inputFingerprint,
             executionKey: input.executionKey,
-            evaluatorVersion: input.evaluatorVersion,
+            evaluatorVersion: EVALUATOR_VERSION,
           })
           .returning({ id: callAnalysisRuns.id });
         analysisId = created?.id;
@@ -231,8 +215,7 @@ export class AnalysisService {
     event: CallAnalysisRequestedEvent,
     claim: AnalysisClaim,
     input: CallEvaluationInput,
-    output: CallAnalysisOutput,
-    analysisRelease: ResolvedAnalysisRelease,
+    evaluation: CriterionEvaluation,
   ): Promise<void> {
     await this.databaseService.client.transaction(async (transaction) => {
       await transaction
@@ -247,9 +230,7 @@ export class AnalysisService {
           status: 'completed',
           provider: this.callAnalyzer.runtime.provider,
           model: this.callAnalyzer.runtime.model,
-          modelParameters: {},
-          evaluatorVersion: analysisRelease.definition.evaluatorVersion,
-          outputSchemaVersion: analysisRelease.definition.outputSchemaVersion,
+          evaluatorVersion: EVALUATOR_VERSION,
           isCurrent: true,
           leaseToken: null,
           leasedUntil: null,
@@ -268,49 +249,42 @@ export class AnalysisService {
       const resultRows = await transaction
         .insert(criterionResults)
         .values(
-          output.evaluation.criterionResults.map((result) => ({
+          evaluation.criterionResults.map((result) => ({
             analysisRunId: claim.analysisId,
-            criterionVersionId: result.criterionVersionId,
+            criterionId: result.criterionId,
             result: result.result,
             rationale: result.rationale,
           })),
         )
-        .returning({
-          id: criterionResults.id,
-          criterionVersionId: criterionResults.criterionVersionId,
-        });
-      const resultIdByCriterion = new Map(
-        resultRows.map((row) => [row.criterionVersionId, row.id]),
-      );
-      const evaluatedByCriterion = new Map(
-        output.evaluation.criterionResults.map((result) => [result.criterionVersionId, result]),
+        .returning({ id: criterionResults.id, criterionId: criterionResults.criterionId });
+      const evaluated = new Map(
+        evaluation.criterionResults.map((result) => [result.criterionId, result]),
       );
       for (const row of resultRows) {
-        const evidenceTurnIds =
-          evaluatedByCriterion.get(row.criterionVersionId)?.evidenceTurnIds ?? [];
-        if (evidenceTurnIds.length === 0) continue;
-        await transaction
-          .insert(criterionResultEvidence)
-          .values(evidenceTurnIds.map((callTurnId) => ({ criterionResultId: row.id, callTurnId })))
-          .onConflictDoNothing();
-      }
-
-      for (const recommendation of output.recommendations) {
-        const criterionResultId = resultIdByCriterion.get(recommendation.criterionVersionId);
-        if (!criterionResultId) continue;
-        await transaction
-          .insert(recommendations)
-          .values({
-            agentId: input.agentId,
-            criterionResultId,
-            targetId: recommendation.targetId,
-            type: recommendation.type,
-            title: recommendation.title,
-            reason: recommendation.reason,
-            proposedChange: recommendation.proposedChange,
-            uiPath: recommendation.uiPath,
-          })
-          .onConflictDoNothing();
+        const result = evaluated.get(row.criterionId);
+        if (!result) continue;
+        if (result.evidenceTurnIds.length) {
+          await transaction
+            .insert(criterionResultEvidence)
+            .values(
+              result.evidenceTurnIds.map((callTurnId) => ({
+                criterionResultId: row.id,
+                callTurnId,
+              })),
+            )
+            .onConflictDoNothing();
+        }
+        if (result.evidenceActionIds.length) {
+          await transaction
+            .insert(criterionResultActionEvidence)
+            .values(
+              result.evidenceActionIds.map((callActionEventId) => ({
+                criterionResultId: row.id,
+                callActionEventId,
+              })),
+            )
+            .onConflictDoNothing();
+        }
       }
 
       if (event.data.batchId) {
@@ -410,9 +384,8 @@ function fingerprint(value: unknown): string {
 }
 
 function executionKeyFor(event: CallAnalysisRequestedEvent, inputFingerprint: string): string {
-  if (event.data.runReason !== 'manual' && event.data.runReason !== 'backtest') {
+  if (event.data.runReason !== 'manual' && event.data.runReason !== 'backtest')
     return inputFingerprint;
-  }
   return fingerprint({ inputFingerprint, forceRunKey: event.data.requestKey ?? event.messageId });
 }
 

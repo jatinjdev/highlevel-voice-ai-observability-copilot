@@ -1,21 +1,17 @@
 import type { VoiceCallEndPayload } from '@copilot/contracts';
 import {
-  agentConfigSnapshots,
   locations,
   messageOutbox,
   successCriteria,
-  successCriterionVersions,
   voiceAgents,
+  voiceAgentConfigurations,
   webhookInbox,
 } from '@copilot/database';
 import { config } from 'dotenv';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { desc, eq } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { Pool } from 'pg';
-
-import { compileUserCriterion } from '../observability/user-criterion-compiler';
 
 export interface ScenarioCallPayload {
   id: string;
@@ -38,26 +34,9 @@ export interface EvaluationScenarioPack {
   expectations?: {
     calls: Record<
       string,
-      {
-        outcome: 'success' | 'partial' | 'failure';
-        mustFlagCriterionKeys: string[];
-        mustRecommendTargets: string[];
-        mustRecommendForCriterionKeys?: string[];
-        mustNotRecommendTargets?: string[];
-        minimumRecommendations?: number;
-        mustRecommendTargetPrefixes?: string[];
-        mustNotRecommendTargetPrefixes?: string[];
-      }
+      { expectedResults: Record<string, 'pass' | 'fail' | 'not_applicable' | 'unknown'> }
     >;
-    agent: {
-      minimumFlaggedCalls: number;
-      repeatedCriterionKeys: string[];
-      mustRecommendTargets: string[];
-      mustNotRecommendTargets?: string[];
-      minimumRecommendations?: number;
-      mustRecommendTargetPrefixes?: string[];
-      mustNotRecommendTargetPrefixes?: string[];
-    };
+    recommendations: Record<string, { shouldGenerate: boolean }>;
   };
   calls: Array<{
     name: string;
@@ -113,101 +92,53 @@ export async function seedScenarioPack(
       .returning({ id: voiceAgents.id });
     if (!agent) throw new Error('Could not persist the evaluation Voice Agent.');
     const configuration = {
-      agentPrompt: pack.agent.prompt,
       source: 'evaluation_fixture',
       actions: { availability: 'unknown' },
       knowledgeBase: { availability: 'unknown' },
     };
     await database
-      .insert(agentConfigSnapshots)
+      .insert(voiceAgentConfigurations)
       .values({
         agentId: agent.id,
-        sourceHash: createHash('sha256').update(JSON.stringify(configuration)).digest('hex'),
-        source: 'fixture',
+        currentPrompt: pack.agent.prompt,
+        promptHash: createHash('sha256').update(pack.agent.prompt).digest('hex'),
         configuration,
-        evidenceCapabilities: {
-          transcript: true,
-          timestamps: false,
-          audio: false,
-          configuredActions: false,
-          executedActions: true,
-          knowledgeBase: false,
-          transcriptionConfiguration: false,
-          speechConfiguration: false,
-        },
+        syncStatus: 'fixture',
+        syncedAt: new Date(),
       })
       .onConflictDoUpdate({
-        target: [agentConfigSnapshots.agentId, agentConfigSnapshots.sourceHash],
+        target: voiceAgentConfigurations.agentId,
         set: {
+          currentPrompt: pack.agent.prompt,
+          promptHash: createHash('sha256').update(pack.agent.prompt).digest('hex'),
           configuration,
-          evidenceCapabilities: {
-            transcript: true,
-            timestamps: false,
-            audio: false,
-            configuredActions: false,
-            executedActions: true,
-            knowledgeBase: false,
-            transcriptionConfiguration: false,
-            speechConfiguration: false,
-          },
-          capturedAt: new Date(),
+          syncStatus: 'fixture',
+          syncedAt: new Date(),
+          updatedAt: new Date(),
         },
       });
 
     let criteriaActivated = 0;
     for (const definition of pack.agent.userDefinedCriteria ?? []) {
-      const compiled = compileUserCriterion(definition.rule);
+      const name = definition.id.trim();
       const [criterion] = await database
         .insert(successCriteria)
         .values({
           agentId: agent.id,
-          stableKey: compiled.stableKey,
-          origin: 'user_defined',
-          criterionClass: compiled.criterionClass,
-          lifecycleState: 'active',
+          name,
+          normalizedName: normalizeCriterionName(name),
+          description: definition.rule,
+          source: 'user',
         })
         .onConflictDoUpdate({
-          target: [successCriteria.agentId, successCriteria.stableKey],
+          target: [successCriteria.agentId, successCriteria.normalizedName],
           set: {
-            criterionClass: compiled.criterionClass,
-            lifecycleState: 'active',
+            description: definition.rule,
             updatedAt: new Date(),
           },
         })
         .returning({ id: successCriteria.id });
       if (!criterion) throw new Error(`Could not activate fixture criterion ${definition.id}.`);
-
-      const definitionHash = createHash('sha256')
-        .update(JSON.stringify({ rule: definition.rule, compiled }))
-        .digest('hex');
-      const definitionReference = `evaluation-definition:${definitionHash}`;
-      const [latest] = await database
-        .select({
-          version: successCriterionVersions.version,
-          sourceReferences: successCriterionVersions.sourceReferences,
-        })
-        .from(successCriterionVersions)
-        .where(eq(successCriterionVersions.criterionId, criterion.id))
-        .orderBy(desc(successCriterionVersions.version))
-        .limit(1);
-      if (!latest?.sourceReferences.includes(definitionReference)) {
-        await database.insert(successCriterionVersions).values({
-          criterionId: criterion.id,
-          version: (latest?.version ?? 0) + 1,
-          title: compiled.title,
-          naturalLanguageRule: definition.rule,
-          applicabilityDefinition: compiled.applicabilityDefinition,
-          evaluationInstructions: compiled.evaluationInstructions,
-          requiredEvidence: compiled.requiredEvidence,
-          severityPolicy: {
-            review: 'A concrete deviation worth inspecting',
-            critical: 'A credible risk of serious customer or business harm',
-          },
-          sourceReferences: [definitionReference],
-          allowedRecommendationTargetIds: compiled.allowedRecommendationTargetIds,
-          compilerVersion: 'user-criterion-compiler-v1',
-        });
-      }
       criteriaActivated += 1;
     }
 
@@ -264,6 +195,10 @@ export async function seedScenarioPack(
   } finally {
     await pool.end();
   }
+}
+
+function normalizeCriterionName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-US');
 }
 
 function buildPayload(

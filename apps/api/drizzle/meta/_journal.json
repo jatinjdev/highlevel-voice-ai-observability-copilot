@@ -134,6 +134,13 @@
       "when": 1784393986504,
       "tag": "0018_tough_smasher",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1784494143959,
+      "tag": "0019_simplified_analysis_model",
+      "breakpoints": true
     }
   ]
 }

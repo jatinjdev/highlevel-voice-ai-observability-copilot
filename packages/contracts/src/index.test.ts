@@ -4,38 +4,33 @@ import {
   agentAnalysisSummarySchema,
   agentReanalysisRequestSchema,
   agentReanalysisResponseSchema,
-  pasteReadyRecommendationChange,
+  normalizeCriterionName,
   pipelineSummarySchema,
+  recommendationSchema,
 } from './index';
 
-describe('pasteReadyRecommendationChange', () => {
-  it('turns meta-level prompt advice into a paste-ready instruction', () => {
-    expect(
-      pasteReadyRecommendationChange({
-        type: 'prompt',
-        proposedChange:
-          'Explicitly instruct the Voice Agent to say it cannot confirm an order change without verification, and to offer a concrete follow-up.',
-      }),
-    ).toBe(
-      'Say you cannot confirm an order change without verification, and offer a concrete follow-up.',
-    );
-
-    expect(
-      pasteReadyRecommendationChange({
-        type: 'prompt',
-        proposedChange:
-          'Add a core instruction for order handling: when the caller corrects an item, discard the old item before continuing.',
-      }),
-    ).toBe('When the caller corrects an item, discard the old item before continuing.');
+describe('normalizeCriterionName', () => {
+  it('provides one canonical uniqueness key for criterion names', () => {
+    expect(normalizeCriterionName('  Confirm   Order DETAILS  ')).toBe('confirm order details');
   });
+});
 
-  it('leaves direct prompt text unchanged', () => {
-    expect(
-      pasteReadyRecommendationChange({
-        type: 'prompt',
-        proposedChange: 'Confirm the delivery address before placing the order.',
-      }),
-    ).toBe('Confirm the delivery address before placing the order.');
+describe('recommendationSchema', () => {
+  it('requires paste-ready agent guidance tied to one criterion', () => {
+    const result = recommendationSchema.safeParse({
+      id: 'b15cbd24-88bb-4fc4-b581-9ea5e86bd870',
+      criterionId: 'c11e6d46-8aa8-45ad-a205-a2c7869c33b1',
+      criterionName: 'Confirm order details',
+      headline: 'Confirm details before completion',
+      explanation: 'Recent failed calls ended without confirming the final order.',
+      promptAddition:
+        'Before completing an order, repeat the final items and ask the caller to confirm.',
+      affectedCallCount: 5,
+      sampledFailureCount: 5,
+      generatedAt: '2026-07-20T00:00:00.000Z',
+    });
+
+    expect(result.success).toBe(true);
   });
 });
 

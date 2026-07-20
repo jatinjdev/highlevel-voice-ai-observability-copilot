@@ -1,7 +1,10 @@
 # Breaking observability refactor plan
 
-Status: proposed
+Status: superseded by ADR 0007
 Date: 2026-07-17
+
+> Historical refactor plan. The implemented design deliberately removed configuration snapshots,
+> criterion versions and sets, analysis releases, call recommendations, and automatic guidance.
 
 ## Objective
 

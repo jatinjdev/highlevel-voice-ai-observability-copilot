@@ -1,5 +1,9 @@
 # Analytics and dashboard redesign
 
+> Historical research record. The implemented checklist-only product and current terminology are
+> defined by `CONTEXT.md` and ADR 0007. Scores, prompt versions, call recommendations, sentiment
+> trajectories, and cohort gates in this document are not current behavior.
+
 > The check applicability, HighLevel capability, and recommendation-target rules in
 > [CAPABILITY_AWARE_EVALUATION.md](./CAPABILITY_AWARE_EVALUATION.md) supersede generic
 > deterministic thresholds in this earlier design.

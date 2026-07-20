@@ -1,5 +1,7 @@
 import type { z } from 'zod';
 
+export const LANGUAGE_MODEL = Symbol('LANGUAGE_MODEL');
+
 export interface StructuredGenerationRequest<TSchema extends z.ZodType> {
   schema: TSchema;
   schemaName: string;

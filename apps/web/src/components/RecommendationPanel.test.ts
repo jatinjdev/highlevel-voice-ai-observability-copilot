@@ -7,17 +7,14 @@ import RecommendationPanel from './RecommendationPanel.vue';
 function recommendation(overrides: Partial<Recommendation> = {}): Recommendation {
   return {
     id: crypto.randomUUID(),
-    scope: 'agent',
     criterionId: crypto.randomUUID(),
-    criterionVersionId: crypto.randomUUID(),
-    supportingCallCount: 6,
-    targetId: 'prompt.core-instructions',
-    type: 'prompt',
-    title: 'Clarify the call flow',
-    reason: 'The agent skipped a required confirmation.',
-    proposedChange: 'Require confirmation before completing the request.',
-    uiPath: 'Build > Agent prompt',
-    evidenceTurnIds: [],
+    criterionName: 'Confirm before completion',
+    headline: 'Clarify the call flow',
+    explanation: 'The agent skipped a required confirmation.',
+    promptAddition: 'Confirm the request before completing it.',
+    affectedCallCount: 6,
+    sampledFailureCount: 6,
+    generatedAt: '2026-07-20T00:00:00.000Z',
     ...overrides,
   };
 }
@@ -25,19 +22,18 @@ function recommendation(overrides: Partial<Recommendation> = {}): Recommendation
 describe('RecommendationPanel', () => {
   it('shows a paste-ready aggregate recommendation', () => {
     const wrapper = mount(RecommendationPanel, {
-      props: { scope: 'agent', analyzedCallCount: 12, recommendations: [recommendation()] },
+      props: { recommendations: [recommendation()] },
     });
-    expect(wrapper.text()).toContain('Patterns across 12 analyzed calls');
-    expect(wrapper.text()).toContain('Seen in 6 calls');
+    expect(wrapper.text()).toContain('6 failed calls · 6 reviewed');
     expect(wrapper.text()).toContain('The agent skipped a required confirmation.');
     expect(wrapper.text()).toContain('Copy and paste into your agent prompt');
-    expect(wrapper.text()).toContain('Require confirmation before completing the request.');
+    expect(wrapper.text()).toContain('Confirm the request before completing it.');
   });
 
   it('emits the recommendation from the copy icon', async () => {
-    const item = recommendation({ scope: 'call', supportingCallCount: 1 });
+    const item = recommendation({ affectedCallCount: 1, sampledFailureCount: 1 });
     const wrapper = mount(RecommendationPanel, {
-      props: { scope: 'call', recommendations: [item] },
+      props: { recommendations: [item] },
     });
     await wrapper.get('button[aria-label="Copy prompt change"]').trigger('click');
     expect(wrapper.emitted('copy')).toEqual([[item]]);

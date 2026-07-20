@@ -1,6 +1,5 @@
 import type { CallIngestionRequestedEvent, InstallationChangedEvent } from '@copilot/contracts';
 import {
-  agentConfigSnapshots,
   callActionEvents,
   callTurns,
   ingestionJobs,
@@ -8,12 +7,12 @@ import {
   messageOutbox,
   processedMessages,
   voiceAgents,
+  voiceAgentConfigurations,
   voiceCalls,
   webhookInbox,
 } from '@copilot/database';
 import { Injectable } from '@nestjs/common';
-import { and, desc, eq, isNull } from 'drizzle-orm';
-import { createHash } from 'node:crypto';
+import { and, eq } from 'drizzle-orm';
 
 import { WorkerDatabaseService } from './database.service';
 import { voiceCallEndPayloadSchema } from './voice-call-payload';
@@ -75,50 +74,16 @@ export class IngestionService {
         .returning({ id: voiceAgents.id });
       if (!agent) throw new Error(`Agent ${payload.agentId} could not be persisted.`);
 
-      const [existingSnapshot] = await transaction
-        .select({ id: agentConfigSnapshots.id })
-        .from(agentConfigSnapshots)
-        .where(
-          and(eq(agentConfigSnapshots.agentId, agent.id), isNull(agentConfigSnapshots.validTo)),
-        )
-        .orderBy(desc(agentConfigSnapshots.capturedAt))
-        .limit(1);
-      let configSnapshotId = existingSnapshot?.id;
-      if (!configSnapshotId) {
-        const configuration = {
-          agentPrompt: { availability: 'unknown' },
-          actions: { availability: 'unknown' },
-          knowledgeBase: { availability: 'unknown' },
-          speech: { availability: 'unknown' },
-        };
-        const [snapshot] = await transaction
-          .insert(agentConfigSnapshots)
-          .values({
-            agentId: agent.id,
-            sourceHash: createHash('sha256').update(JSON.stringify(configuration)).digest('hex'),
-            source: 'highlevel_api',
-            configuration,
-            evidenceCapabilities: {
-              transcript: true,
-              timestamps: false,
-              audio: false,
-              configuredActions: false,
-              knowledgeBase: false,
-              transcriptionConfiguration: false,
-              speechConfiguration: false,
-            },
-          })
-          .returning({ id: agentConfigSnapshots.id });
-        configSnapshotId = snapshot?.id;
-      }
-      if (!configSnapshotId) throw new Error('Agent Configuration Snapshot could not be created.');
+      await transaction
+        .insert(voiceAgentConfigurations)
+        .values({ agentId: agent.id })
+        .onConflictDoNothing({ target: voiceAgentConfigurations.agentId });
 
       const [call] = await transaction
         .insert(voiceCalls)
         .values({
           agentId: agent.id,
           locationId: location.id,
-          agentConfigSnapshotId: configSnapshotId,
           sourceWebhookInboxId: event.data.webhookInboxId,
           highLevelCallId: payload.id,
           contactId: payload.contactId,
@@ -133,7 +98,6 @@ export class IngestionService {
           target: [voiceCalls.locationId, voiceCalls.highLevelCallId],
           set: {
             agentId: agent.id,
-            agentConfigSnapshotId: configSnapshotId,
             sourceWebhookInboxId: event.data.webhookInboxId,
             contactId: payload.contactId,
             sourceTranscript: payload.transcript,

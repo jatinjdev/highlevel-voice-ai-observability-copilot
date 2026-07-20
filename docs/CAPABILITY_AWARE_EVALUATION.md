@@ -1,5 +1,9 @@
 # Capability-aware Voice AI evaluation
 
+> Historical research record, superseded for implementation by ADR 0007. The current evaluator is
+> checklist-only and sees no agent configuration. The current recommendation surface produces only
+> manually requested, paste-ready prompt additions.
+
 ## Decision
 
 The evaluator must never infer the current value of an agent setting from a transcript.

@@ -13,9 +13,11 @@ const api = vi.hoisted(() => ({
   initializeMarketplaceSession: vi.fn(),
   reanalyzeAgent: vi.fn(),
   reanalyzeCall: vi.fn(),
-  activateSuccessCriterion: vi.fn(),
-  createSuccessCriterionDraft: vi.fn(),
-  retireSuccessCriterion: vi.fn(),
+  createSuccessCriterion: vi.fn(),
+  updateSuccessCriterion: vi.fn(),
+  deleteSuccessCriterion: vi.fn(),
+  generateRecommendation: vi.fn(),
+  deleteRecommendation: vi.fn(),
 }));
 vi.mock('./lib/api', () => api);
 
@@ -43,16 +45,7 @@ const emptyRecommendationCall: CallAnalysisDetail = {
     evaluatorVersion: 'test-v1',
     completedAt: '2026-07-18T00:00:01.000Z',
   },
-  configuration: {
-    id: 'c67f2cb3-cec5-4b64-90f1-e9789c9759f2',
-    source: 'fixture',
-    sourceHash: 'fixture-hash',
-    capturedAt: '2026-07-18T00:00:00.000Z',
-    configuration: {},
-    evidenceCapabilities: {},
-  },
   criterionResults: [],
-  recommendations: [],
 };
 
 describe('DashboardView', () => {
@@ -69,14 +62,60 @@ describe('DashboardView', () => {
     expect(wrapper.text()).toContain('Flagged issues');
   });
 
-  it('keeps recommendations visible when none are generated', async () => {
+  it('keeps the call page focused on checklist evidence', async () => {
     const { wrapper } = await mountView(
       '/?locationId=test&callId=1bfb4a89-e709-4f65-a5d0-905ff61cbd49',
     );
-    expect(wrapper.get('.call-recommendations').text()).toContain('AI recommendations');
-    expect(wrapper.get('.call-recommendations').text()).toContain(
-      'No prompt changes are recommended',
+    expect(wrapper.text()).toContain('Flagged issues');
+    expect(wrapper.find('.call-recommendations').exists()).toBe(false);
+  });
+
+  it('highlights an executed Call Action cited by a failed criterion', async () => {
+    api.getCallAnalysis.mockResolvedValue({
+      ...emptyRecommendationCall,
+      call: {
+        ...emptyRecommendationCall.call,
+        actionEvents: [
+          {
+            id: '57c18411-c05f-46ad-8ec7-b74dd6862efd',
+            ordinal: 1,
+            actionType: 'appointment',
+            actionName: 'Book appointment',
+            outcome: 'failed',
+            resultSummary: {},
+          },
+        ],
+      },
+      criterionResults: [
+        {
+          id: '2e495829-8710-448d-bdb1-3fa843581a48',
+          criterionId: 'e06954c8-e9d3-46ae-948b-c5782204d75c',
+          criterionName: 'Complete booking',
+          criterionDescription: 'The Voice Agent must complete an appointment booking.',
+          result: 'fail',
+          rationale: 'The supplied booking action failed.',
+          evidence: [],
+          actionEvidence: [
+            {
+              id: '57c18411-c05f-46ad-8ec7-b74dd6862efd',
+              ordinal: 1,
+              actionName: 'Book appointment',
+              outcome: 'failed',
+            },
+          ],
+        },
+      ],
+    } satisfies CallAnalysisDetail);
+
+    const { wrapper } = await mountView(
+      '/?locationId=test&callId=1bfb4a89-e709-4f65-a5d0-905ff61cbd49',
     );
+    const issue = wrapper.find('.issue-list button');
+    await issue.trigger('click');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Executed Call Actions');
+    expect(wrapper.find('.call-action-row').attributes('data-highlighted')).toBe('true');
   });
 });
 

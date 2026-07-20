@@ -19,16 +19,17 @@ describe('promptRemediationEvaluationPack', () => {
     expect(Object.keys(expectations.calls).sort()).toEqual(callIds.sort());
     expect(
       Object.values(expectations.calls).filter(
-        ({ mustFlagCriterionKeys }) => mustFlagCriterionKeys.length === 0,
+        ({ expectedResults }) => !Object.values(expectedResults).includes('fail'),
       ),
     ).toHaveLength(2);
     expect(
-      Object.values(expectations.calls).filter(
-        ({ mustFlagCriterionKeys }) => mustFlagCriterionKeys.length > 0,
+      Object.values(expectations.calls).filter(({ expectedResults }) =>
+        Object.values(expectedResults).includes('fail'),
       ),
     ).toHaveLength(6);
-    expect(expectations.agent.minimumFlaggedCalls).toBe(6);
-    expect(expectations.agent.minimumRecommendations).toBe(5);
-    expect(expectations.agent.mustRecommendTargetPrefixes).toEqual(['prompt.']);
+    expect(Object.values(expectations.recommendations)).toHaveLength(7);
+    expect(
+      Object.values(expectations.recommendations).every(({ shouldGenerate }) => shouldGenerate),
+    ).toBe(true);
   });
 });

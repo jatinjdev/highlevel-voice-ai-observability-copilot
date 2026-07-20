@@ -52,76 +52,6 @@ export const voiceCallEndPayloadSchema = z
 
 export type VoiceCallEndPayload = z.infer<typeof voiceCallEndPayloadSchema>;
 
-export const callEvalCaseSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  agentPrompt: z.string().min(1),
-  provenance: z.object({
-    dataset: z.string().min(1),
-    sourceId: z.string().min(1),
-    sourceUrl: z.url(),
-    license: z.literal('CC-BY-4.0'),
-    taskType: z.string().min(1),
-    callerPartnerRating: z.number().min(0).max(10).nullable(),
-    taskSubmissionMatchesAssigned: z.boolean(),
-  }),
-  referenceTranscript: z.string().min(1),
-  payload: voiceCallEndPayloadSchema,
-  expectations: z.object({
-    annotationStatus: z.literal('provisional_manual'),
-    mustFlagChecks: z.array(z.string()),
-    mustClearChecks: z.array(z.string()),
-    mustRecommendTargets: z.array(z.string()).default([]),
-    mustNotRecommendTargets: z.array(z.string()).default([]),
-    rationale: z.string().min(1),
-  }),
-});
-
-export const callEvalCorpusSchema = z.object({
-  schemaVersion: z.literal(1),
-  name: z.string().min(1),
-  description: z.string().min(1),
-  provenance: z.object({
-    dataset: z.string().min(1),
-    repository: z.url(),
-    revision: z.string().regex(/^[a-f0-9]{40}$/),
-    license: z.literal('CC-BY-4.0'),
-  }),
-  cases: z.array(callEvalCaseSchema).min(1),
-});
-
-export type CallEvalCase = z.infer<typeof callEvalCaseSchema>;
-export type CallEvalCorpus = z.infer<typeof callEvalCorpusSchema>;
-
-export const callEvalReportSchema = z.object({
-  generatedAt: z.iso.datetime(),
-  model: z.string().min(1),
-  corpus: z.string().min(1),
-  sourceRevision: z.string().regex(/^[a-f0-9]{40}$/),
-  scope: z.enum(['full', 'focused']).optional(),
-  total: z.number().int().nonnegative(),
-  passed: z.number().int().nonnegative(),
-  results: z.array(
-    z.object({
-      id: z.string().min(1),
-      passed: z.boolean(),
-      mismatches: z.array(z.string()),
-      actual: z
-        .object({
-          outcome: z.enum(['success', 'partial', 'failure']),
-          criteria: z.record(
-            z.string(),
-            z.enum(['clear', 'review', 'critical', 'not_applicable', 'not_observable']),
-          ),
-          recommendationTargets: z.array(z.string()),
-        })
-        .optional(),
-    }),
-  ),
-});
-
-export type CallEvalReport = z.infer<typeof callEvalReportSchema>;
-
 export const pipelineAnalysisStatusSchema = z.enum([
   'not_queued',
   'queued',
@@ -214,6 +144,12 @@ const analysisRequestedDataSchema = z.object({
   batchId: z.uuid().optional(),
 });
 
+const recommendationRequestedDataSchema = z.object({
+  requestId: z.uuid(),
+  agentId: z.uuid(),
+  criterionId: z.uuid(),
+});
+
 export const callIngestionRequestedEventSchema = domainEventMetadataSchema
   .extend({
     type: z.literal('call.ingestion.requested'),
@@ -246,10 +182,22 @@ export const callAnalysisRequestedEventSchema = domainEventMetadataSchema
     path: ['tenant', 'locationId'],
   });
 
+export const criterionRecommendationRequestedEventSchema = domainEventMetadataSchema
+  .extend({
+    type: z.literal('criterion.recommendation.requested'),
+    version: z.literal(1),
+    data: recommendationRequestedDataSchema,
+  })
+  .refine((event) => event.tenant.locationId !== null, {
+    message: 'Recommendation events require a location tenant.',
+    path: ['tenant', 'locationId'],
+  });
+
 export const domainEventSchema = z.union([
   callIngestionRequestedEventSchema,
   installationChangedEventSchema,
   callAnalysisRequestedEventSchema,
+  criterionRecommendationRequestedEventSchema,
 ]);
 
 export type TenantReference = z.infer<typeof tenantReferenceSchema>;
@@ -257,15 +205,15 @@ export type DomainEvent = z.infer<typeof domainEventSchema>;
 export type CallIngestionRequestedEvent = z.infer<typeof callIngestionRequestedEventSchema>;
 export type InstallationChangedEvent = z.infer<typeof installationChangedEventSchema>;
 export type CallAnalysisRequestedEvent = z.infer<typeof callAnalysisRequestedEventSchema>;
+export type CriterionRecommendationRequestedEvent = z.infer<
+  typeof criterionRecommendationRequestedEventSchema
+>;
+
+export function normalizeCriterionName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-US');
+}
 
 export const criterionStatusSchema = z.enum(['pass', 'fail', 'not_applicable', 'unknown']);
-export const criterionOriginSchema = z.enum([
-  'universal',
-  'prompt_generated',
-  'user_defined',
-  'configuration',
-]);
-export const criterionClassSchema = z.enum(['adherence', 'safety', 'outcome', 'diagnostic']);
 export const evidenceCitationSchema = z.object({
   turnId: z.uuid(),
   turnOrdinal: z.number().int().positive(),
@@ -273,19 +221,30 @@ export const evidenceCitationSchema = z.object({
   text: z.string().min(1),
 });
 
+export const actionEvidenceCitationSchema = z.object({
+  id: z.uuid(),
+  ordinal: z.number().int().positive(),
+  actionName: z.string().nullable(),
+  outcome: z.string().nullable(),
+});
+
 export const recommendationSchema = z.object({
   id: z.uuid(),
-  scope: z.enum(['call', 'agent']),
   criterionId: z.uuid(),
-  criterionVersionId: z.uuid(),
-  supportingCallCount: z.number().int().positive(),
-  targetId: z.string(),
-  type: z.literal('prompt'),
-  title: z.string(),
-  reason: z.string(),
-  proposedChange: z.string(),
-  uiPath: z.string().nullable(),
-  evidenceTurnIds: z.array(z.uuid()),
+  criterionName: z.string(),
+  headline: z.string(),
+  explanation: z.string(),
+  promptAddition: z.string(),
+  affectedCallCount: z.number().int().nonnegative(),
+  sampledFailureCount: z.number().int().nonnegative(),
+  generatedAt: z.iso.datetime(),
+});
+
+export const recommendationGenerationStatusSchema = z.object({
+  criterionId: z.uuid(),
+  status: z.enum(['idle', 'queued', 'processing', 'completed', 'not_needed', 'failed']),
+  lastError: z.string().nullable(),
+  requestedAt: z.iso.datetime().nullable(),
 });
 
 export const agentAnalysisSummarySchema = z.object({
@@ -307,27 +266,19 @@ export const observabilityDashboardSchema = z.object({
   agents: z.array(dashboardAgentSchema),
 });
 
-export const agentConfigurationSnapshotSchema = z.object({
-  id: z.uuid(),
-  source: z.enum(['highlevel_api', 'user_supplemented', 'fixture']),
-  sourceHash: z.string(),
-  capturedAt: z.iso.datetime(),
+export const agentConfigurationSchema = z.object({
+  currentPrompt: z.string().nullable(),
+  promptHash: z.string().nullable(),
+  syncStatus: z.string(),
+  syncedAt: z.iso.datetime().nullable(),
   configuration: z.record(z.string(), z.unknown()),
-  evidenceCapabilities: z.record(z.string(), z.unknown()),
 });
 
 export const successCriterionSchema = z.object({
   id: z.uuid(),
-  stableKey: z.string(),
-  origin: criterionOriginSchema,
-  criterionClass: criterionClassSchema,
-  lifecycleState: z.enum(['draft', 'active', 'retired']),
-  versionId: z.uuid(),
-  version: z.number().int().positive(),
-  title: z.string(),
-  naturalLanguageRule: z.string(),
-  applicabilityDefinition: z.record(z.string(), z.unknown()),
-  requiredEvidence: z.array(z.string()),
+  name: z.string(),
+  description: z.string(),
+  source: z.enum(['default', 'user']),
   resultDistribution: z.object({
     pass: z.number().int().nonnegative(),
     fail: z.number().int().nonnegative(),
@@ -343,7 +294,7 @@ export const agentCallListItemSchema = z.object({
   durationSeconds: z.number().int().nonnegative(),
   analysisStatus: z.enum(['queued', 'processing', 'completed', 'failed']),
   flaggedIssueCount: z.number().int().nonnegative(),
-  failedCriterionVersionIds: z.array(z.uuid()),
+  failedCriterionIds: z.array(z.uuid()),
 });
 
 export const agentCallPageSchema = z.object({
@@ -364,9 +315,10 @@ export const agentAnalysisDetailSchema = z.object({
     lifecycleState: z.string(),
   }),
   summary: agentAnalysisSummarySchema,
-  activeConfiguration: agentConfigurationSnapshotSchema.nullable(),
+  configuration: agentConfigurationSchema.nullable(),
   successCriteria: z.array(successCriterionSchema),
   recommendations: z.array(recommendationSchema),
+  recommendationStatuses: z.array(recommendationGenerationStatusSchema),
   calls: z.array(agentCallListItemSchema),
   nextCallCursor: z.string().nullable(),
   totalCallCount: z.number().int().nonnegative(),
@@ -384,14 +336,12 @@ export const transcriptTurnSchema = z.object({
 export const criterionResultSchema = z.object({
   id: z.uuid(),
   criterionId: z.uuid(),
-  criterionVersionId: z.uuid(),
-  stableKey: z.string(),
-  title: z.string(),
-  origin: criterionOriginSchema,
-  criterionClass: criterionClassSchema,
+  criterionName: z.string(),
+  criterionDescription: z.string(),
   result: criterionStatusSchema,
   rationale: z.string(),
   evidence: z.array(evidenceCitationSchema),
+  actionEvidence: z.array(actionEvidenceCitationSchema),
 });
 
 export const callAnalysisDetailSchema = z.object({
@@ -429,9 +379,7 @@ export const callAnalysisDetailSchema = z.object({
       completedAt: z.iso.datetime().nullable(),
     })
     .nullable(),
-  configuration: agentConfigurationSnapshotSchema,
   criterionResults: z.array(criterionResultSchema),
-  recommendations: z.array(recommendationSchema),
 });
 
 export const callReanalysisResponseSchema = z.object({
@@ -465,23 +413,24 @@ export const analysisBatchStatusSchema = z.object({
   completedAt: z.string().nullable(),
 });
 
-export const successCriterionDraftRequestSchema = z.object({
-  naturalLanguageRule: z.string().trim().min(10).max(2_000),
+export const createSuccessCriterionRequestSchema = z.object({
+  name: z.string().trim().min(2).max(96),
+  description: z.string().trim().min(10).max(2_000),
 });
 
-export const successCriterionDraftResponseSchema = z.object({
-  criterion: successCriterionSchema.omit({ resultDistribution: true }),
-  warnings: z.array(z.string()),
+export const updateSuccessCriterionRequestSchema = z.object({
+  description: z.string().trim().min(10).max(2_000),
 });
 
-export const successCriterionActivationResponseSchema = z.object({
+export const successCriterionMutationResponseSchema = z.object({
   criterion: successCriterionSchema.omit({ resultDistribution: true }),
-  criterionSet: z.object({
-    id: z.uuid(),
-    version: z.number().int().positive(),
-    fingerprint: z.string(),
-  }),
   reanalysisQueued: z.number().int().nonnegative(),
+});
+
+export const recommendationGenerationResponseSchema = z.object({
+  requestId: z.uuid(),
+  criterionId: z.uuid(),
+  status: z.literal('queued'),
 });
 
 export type CriterionStatus = z.infer<typeof criterionStatusSchema>;
@@ -497,50 +446,7 @@ export type AgentReanalysisResponse = z.infer<typeof agentReanalysisResponseSche
 export type AnalysisBatchStatus = z.infer<typeof analysisBatchStatusSchema>;
 export type SuccessCriterion = z.infer<typeof successCriterionSchema>;
 export type Recommendation = z.infer<typeof recommendationSchema>;
-
-/**
- * Converts legacy, meta-level prompt advice into text that can be pasted directly into
- * an agent prompt. New evaluations are required to produce paste-ready text already;
- * this remains as a compatibility boundary for recommendations created before that
- * contract existed.
- */
-export function pasteReadyRecommendationChange(
-  recommendation: Pick<Recommendation, 'type' | 'proposedChange'>,
-): string {
-  const original = recommendation.proposedChange.trim();
-  if (recommendation.type !== 'prompt' || !original) return original;
-
-  let value = original;
-  let removedMetaInstruction = false;
-  const metaInstructionPrefixes = [
-    /^(?:explicitly\s+)?instruct\s+(?:the\s+)?(?:voice\s+)?agent\s+to\s+/i,
-    /^(?:add|include|insert)(?:\s+or\s+reinforce)?\s+(?:a|an)?\s*(?:core\s+)?(?:prompt\s+)?(?:instruction|rule|guidance)(?:\s+for\s+[^:]+)?(?:\s+that|\s+to|\s*:)\s*/i,
-    /^(?:update|revise|edit|change|strengthen|clarify)\s+(?:the\s+)?(?:voice\s+agent\s+|agent\s+)?prompt\s+(?:to|so\s+that|with)\s+/i,
-    /^(?:the\s+)?(?:voice\s+agent\s+|agent\s+)?prompt\s+should\s+(?:say|state|require|instruct(?:\s+(?:the\s+)?(?:voice\s+)?agent)?\s+to)\s+/i,
-  ];
-
-  for (const prefix of metaInstructionPrefixes) {
-    const next = value.replace(prefix, '');
-    if (next !== value) {
-      value = next;
-      removedMetaInstruction = true;
-      break;
-    }
-  }
-
-  if (!removedMetaInstruction) return original;
-
-  value = value
-    .replace(/^that\s+/i, '')
-    .replace(/^require\s+(?:that\s+)?(?:the\s+)?(?:voice\s+)?agent\s+to\s+/i, 'You must ')
-    .replace(/^(?:the\s+)?(?:voice\s+)?agent\s+(must|should|cannot|can|will)\b/i, 'You $1')
-    .replace(/^say\s+it\b/i, 'Say you')
-    .replace(/\bthe Voice Agent\b/g, 'you')
-    .replace(/\bthe voice agent\b/g, 'you')
-    .replace(/\bthe agent\b/g, 'you')
-    .replace(/\bit (must|should|cannot|can|will)\b/g, 'you $1')
-    .replace(/([,;])\s+(and|or)\s+to\s+/gi, '$1 $2 ')
-    .trim();
-
-  return value.replace(/^./, (character) => character.toUpperCase());
-}
+export type RecommendationGenerationStatus = z.infer<typeof recommendationGenerationStatusSchema>;
+export type RecommendationGenerationResponse = z.infer<
+  typeof recommendationGenerationResponseSchema
+>;

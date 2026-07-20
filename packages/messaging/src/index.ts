@@ -72,7 +72,8 @@ export class SqsDomainEventPublisher implements DomainEventPublisher {
   }
 
   private queueUrlFor(event: DomainEvent): string {
-    return event.type === 'call.analysis.requested'
+    return event.type === 'call.analysis.requested' ||
+      event.type === 'criterion.recommendation.requested'
       ? this.options.analysisQueueUrl
       : this.options.ingestionQueueUrl;
   }

@@ -14,6 +14,7 @@ export const modelCriterionEvaluationSchema = z.object({
       result: criterionEvaluationStatusSchema,
       rationale: z.string().min(1),
       evidenceTurnIds: z.array(z.string().regex(/^T\d{2,}$/)),
+      evidenceActionIds: z.array(z.string().regex(/^A\d{2,}$/)),
     }),
   ),
 });
@@ -23,16 +24,7 @@ export type ModelCriterionEvaluation = z.infer<typeof modelCriterionEvaluationSc
 
 export interface EvaluationCriterion {
   criterionId: string;
-  criterionVersionId: string;
-  stableKey: string;
-  title: string;
-  origin: 'universal' | 'prompt_generated' | 'user_defined' | 'configuration';
-  criterionClass: 'adherence' | 'safety' | 'outcome' | 'diagnostic';
-  naturalLanguageRule: string;
-  applicabilityDefinition: Record<string, unknown>;
-  evaluationInstructions: string;
-  requiredEvidence: string[];
-  allowedRecommendationTargetIds: string[];
+  description: string;
 }
 
 export interface EvaluationTurn {
@@ -55,17 +47,17 @@ export interface CallEvaluationInput {
   callId: string;
   agentId: string;
   durationSeconds: number;
-  configuration: Record<string, unknown>;
   criteria: EvaluationCriterion[];
   turns: EvaluationTurn[];
   actionEvents: EvaluationActionEvent[];
 }
 
 export interface CriterionResult {
-  criterionVersionId: string;
+  criterionId: string;
   result: CriterionEvaluationStatus;
   rationale: string;
   evidenceTurnIds: string[];
+  evidenceActionIds: string[];
 }
 
 export interface CriterionEvaluation {

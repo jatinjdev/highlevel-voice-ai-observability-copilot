@@ -1,22 +1,11 @@
 <script setup lang="ts">
 import type { Recommendation } from '@copilot/contracts';
 
-withDefaults(
-  defineProps<{
-    recommendations: Recommendation[];
-    scope: 'agent' | 'call';
-    analyzedCallCount?: number;
-    selectedRecommendationId?: string | null;
-  }>(),
-  {
-    analyzedCallCount: 0,
-    selectedRecommendationId: null,
-  },
-);
+defineProps<{ recommendations: Recommendation[] }>();
 
 const emit = defineEmits<{
   copy: [recommendation: Recommendation];
-  select: [recommendation: Recommendation];
+  remove: [recommendation: Recommendation];
 }>();
 </script>
 
@@ -24,9 +13,8 @@ const emit = defineEmits<{
   <section class="recommendations-panel">
     <header class="compact-panel-header">
       <div>
-        <h2>AI recommendations</h2>
-        <p v-if="scope === 'agent'">Patterns across {{ analyzedCallCount }} analyzed calls</p>
-        <p v-else>Changes suggested by this call</p>
+        <h2>Prompt recommendations</h2>
+        <p>Generated on demand from failed Success Criteria across calls</p>
       </div>
       <span>{{ recommendations.length }}</span>
     </header>
@@ -35,29 +23,37 @@ const emit = defineEmits<{
       <article
         v-for="recommendation in recommendations"
         :key="recommendation.id"
+        :data-recommendation-criterion-id="recommendation.criterionId"
         class="recommendation-card"
-        :data-selected="selectedRecommendationId === recommendation.id"
-        @click="emit('select', recommendation)"
       >
         <div class="recommendation-meta">
           <span>Prompt</span>
-          <small v-if="scope === 'agent'">
-            Seen in {{ recommendation.supportingCallCount }}
-            {{ recommendation.supportingCallCount === 1 ? 'call' : 'calls' }}
+          <small>
+            {{ recommendation.affectedCallCount }} failed calls ·
+            {{ recommendation.sampledFailureCount }} reviewed
           </small>
+          <button
+            class="delete-recommendation"
+            type="button"
+            title="Delete recommendation"
+            aria-label="Delete recommendation"
+            @click="emit('remove', recommendation)"
+          >
+            ×
+          </button>
         </div>
-        <h3>{{ recommendation.title }}</h3>
-        <p>{{ recommendation.reason }}</p>
+        <h3>{{ recommendation.headline }}</h3>
+        <p>{{ recommendation.explanation }}</p>
         <div class="copy-block">
           <div>
             <span>Copy and paste into your agent prompt</span>
-            <code>{{ recommendation.proposedChange }}</code>
+            <code>{{ recommendation.promptAddition }}</code>
           </div>
           <button
             type="button"
             title="Copy prompt change"
             aria-label="Copy prompt change"
-            @click.stop="emit('copy', recommendation)"
+            @click="emit('copy', recommendation)"
           >
             <svg aria-hidden="true" viewBox="0 0 24 24">
               <rect x="8" y="8" width="11" height="11" rx="2" />
@@ -68,7 +64,7 @@ const emit = defineEmits<{
       </article>
     </div>
     <div v-else class="panel-empty">
-      No prompt changes are recommended from the current failed criteria.
+      No recommendations yet. Generate one from a failed Success Criterion above.
     </div>
   </section>
 </template>

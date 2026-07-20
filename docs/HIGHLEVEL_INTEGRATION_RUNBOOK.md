@@ -1,435 +1,304 @@
-# HighLevel Integration and Production Flow
+# HighLevel sandbox installation and verification
 
-This document is the source of truth for how the Voice AI Observability Copilot integrates with HighLevel and which steps must be configured manually in HighLevel.
+This is the operator runbook for installing the assignment as a private HighLevel
+Marketplace app in a sandbox Location. It separates the settings configured in HighLevel
+from the behavior owned by this repository.
 
-> Implementation status: Marketplace OAuth, encrypted token persistence and rotation,
-> install/update/uninstall lifecycle handling, signed Custom Page sessions, durable
-> `VoiceAiCallEnd` ingestion, SQS workers, transcript analysis, and the unified
-> dashboard and the assignment AWS stack are implemented. Automatic paginated
-> backfill/reconciliation, evaluation calibration, and horizontally scalable
-> process scheduling remain. See
-> [Implementation status](./IMPLEMENTATION_STATUS.md).
+## Integration choice
 
-## Product boundary
+The app uses a **Marketplace Custom Page**, not Custom JS. HighLevel owns the Location
+navigation entry and iframe; our infrastructure owns the Vue application, NestJS API,
+workers, PostgreSQL, queues, and model requests.
 
-The Copilot is a post-call observability system. It does not join or alter an active call.
+The account hierarchy is:
 
-It:
+```text
+Developer Marketplace account
+  private Marketplace app and test version
 
-1. Reads Voice AI agent configuration and historical call logs.
-2. Receives a `VoiceAiCallEnd` event after future calls finish.
-3. Evaluates each transcript against the selected agent's success criteria.
-4. Shows evidence and recommended prompt/script changes in a Vue Custom Page embedded inside HighLevel.
-
-The current slice produces per-call recommendations. Recurring failure clustering
-across an agent's history is the next analysis increment and is not represented as
-complete in the UI.
-
-HighLevel hosts the navigation entry and iframe. Our infrastructure hosts the Vue application, NestJS API, database, analysis worker, and model calls.
-
-## System flow
-
-```mermaid
-flowchart TD
-    A["Operator creates Voice AI agents and test calls"] --> B["Developer creates private Marketplace app"]
-    B --> C["Install app into sandbox sub-account"]
-    C --> D["HighLevel redirects to OAuth callback with authorization code"]
-    D --> E["Backend exchanges code and stores encrypted location token"]
-    E --> F["Create durable backfill job or start manual sync"]
-    F --> G["Normalize agents, calls and agent rubrics in PostgreSQL"]
-    H["A future Voice AI call ends"] --> I["HighLevel sends VoiceAiCallEnd"]
-    I --> J["Verify signature and persist event once"]
-    J --> K["Acknowledge HighLevel immediately"]
-    J --> L["Background analysis job"]
-    G --> L
-    L --> M["Per-call KPI findings with transcript evidence"]
-    M --> N["Agent-level trends and prioritized recommendation"]
-    N --> O["Vue Custom Page inside HighLevel"]
-    O --> P["Operator reviews evidence and acts on recommendation"]
-    P --> H
+App Test Account (sandbox Agency)
+  Sub-account / Location
+    Voice AI agents and calls
+    installed Marketplace app
+    embedded Custom Page
 ```
 
-## Values required before configuring HighLevel
+The Marketplace app targets **Sub-account**. An Agency user may initiate installation, but
+the resulting grant must authorize the selected Location. A Private Integration Token is
+supported only as a local-development fallback and does not install the app, provide signed
+iframe context, or subscribe the webhook.
 
-Deploy the app before creating the Marketplace version. Replace `https://copilot.example.com` below with the stable HTTPS origin.
+## Deployed URLs
 
-| Purpose          | Planned URL                                                     |
+| Purpose          | URL                                                             |
 | ---------------- | --------------------------------------------------------------- |
 | Custom Page      | `https://dng3naypayh7.cloudfront.net/`                          |
 | OAuth redirect   | `https://dng3naypayh7.cloudfront.net/api/leadconnector/oauth`   |
 | Webhook receiver | `https://dng3naypayh7.cloudfront.net/api/leadconnector/webhook` |
-| Health check     | `https://dng3naypayh7.cloudfront.net/api/health`                |
+| Readiness        | `https://dng3naypayh7.cloudfront.net/api/health/ready`          |
 
-The Custom Page must allow HighLevel to embed it. Do not return `X-Frame-Options: DENY` or `SAMEORIGIN`; configure the `Content-Security-Policy` `frame-ancestors` directive to allow the required HighLevel domains.
+For another environment, replace the origin consistently. The redirect must exactly match
+the saved Marketplace value, including path and trailing slash behavior.
 
-## Manual HighLevel configuration
+## Marketplace builder configuration
 
-### Account model used for the assignment
+### 1. App identity and distribution
 
-The three HighLevel surfaces have different responsibilities:
+- Create a **Private** app.
+- Name it **Voice AI Observability Copilot**.
+- Set **Target User** to **Sub-account**. HighLevel does not allow this choice to be changed
+  after creation.
+- Allow the sandbox Agency or Sub-account user who will perform the test installation.
+- Add the 400 x 400 app icon and assignment screenshots to the test listing.
 
-| Surface                                            | What it represents                                                                  | What we do there                                                                                      |
-| -------------------------------------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| App Test Account                                   | The sandbox Agency environment supplied for app development                         | Hold the assignment's test setup; no production customer data                                         |
-| Sub-account / Location inside the App Test Account | The customer-shaped account where Voice AI agents, calls, and the embedded app live | Create agents and test calls; use its Location ID; install the Marketplace test version here          |
-| Developer Marketplace account                      | The app-builder environment, separate from the App Test Account                     | Create the private app, configure OAuth/scopes/webhooks/Custom Page, generate secrets and a Test Link |
+### 2. Custom Page module
 
-The existing PIT belongs to one sub-account/location inside the App Test Account. It is useful for local development, but it does not create a Marketplace app or replace the final installation flow.
+Under **Build > Modules**, add one Custom Page:
 
-### 1. Prepare the App Test Account sub-account
+- navigation label: **Voice AI Observability Copilot**;
+- Live URL and Testing URL: the Custom Page URL above;
+- placement: the Location left navigation;
+- Custom JS: disabled.
 
-- [ ] Open the App Test Account and switch into the target sub-account/location.
-- [ ] Confirm the current user has permission to access **AI Agents > Voice AI**. Ask the agency administrator to enable the Voice AI permission if the menu is absent.
-- [ ] Record the sub-account Location ID.
-- [ ] Keep the existing sub-account PIT only for local development and API reconnaissance.
+The frontend requests HighLevel user data from the parent window, sends the opaque encrypted
+payload to the API, and receives a short-lived Location-bound application session. A plain
+`locationId` query parameter is never the production authorization boundary.
 
-No HighLevel workflow is required for transcript analysis. The Copilot uses the call-log API for backfill and the Marketplace `VoiceAiCallEnd` webhook for new calls.
+### 3. OAuth scopes
 
-`VoiceAiCallEnd` is a Marketplace app webhook. A **private Marketplace app** can receive it after the app is installed in the sub-account, the webhook URL is configured, and `voice-ai-dashboard.readonly` is granted. A **Private Integration Token (PIT)** is only an API credential; it can authenticate call-log polling/backfill but does not subscribe an endpoint to Marketplace webhook events.
+Grant only the read scopes used by the app:
 
-### 2. Create a useful Voice AI test dataset
+| Scope                           | Use                                                       |
+| ------------------------------- | --------------------------------------------------------- |
+| `voice-ai-dashboard.readonly`   | Read call logs and receive `VoiceAiCallEnd`               |
+| `voice-ai-agents.readonly`      | Read Voice AI agents and the current prompt/configuration |
+| `voice-ai-agent-goals.readonly` | Read configured goals/actions when returned by HighLevel  |
 
-Create two agents so the unified dashboard can show a meaningful comparison.
+No agent, workflow, contact, or Voice AI write scope is needed. The app recommends prompt
+text but never applies a change. A direct Sub-account installation needs only the three scopes
+above. If the app is configured for **Agency bulk installation**, also grant `oauth.readonly`
+and `oauth.write`: the Company-token flow must list installed Locations and exchange the Company
+token for each Location token. Those OAuth scopes authorize token routing, not Voice Agent edits.
 
-Suggested sandbox agents:
+Save scopes before making a version live. A scope change to a live app requires a new draft
+version and reinstall/update grant.
 
-| Agent              | Goal                                                 | Useful failure scenarios                                                 |
-| ------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------ |
-| Appointment Setter | Qualify caller and book an appointment               | Skips qualification, fails to confirm timezone, gives up after objection |
-| Support Triage     | Identify issue and provide or escalate the next step | Misses urgency, gives unsupported answer, fails to escalate              |
+### 4. OAuth and shared secrets
 
-For each agent:
+Under the app's Auth/Secrets settings:
 
-- [ ] Go to **AI Agents > Voice AI > Create Agent**.
-- [ ] Configure a clear agent name, business name, timezone, greeting, and instructions.
-- [ ] Configure the goals/actions that are relevant to the agent. Do not add actions merely for this Copilot.
-- [ ] Save the agent.
-- [ ] Use **Test Your Agent > Web Call** for fast browser-based tests. A phone number is not required for Web Call.
-- [ ] Make several calls with intentionally different outcomes.
-- [ ] Verify the calls under **Voice AI > Dashboards & Logs**, filtering Call Type to **Test** if necessary.
+- register the exact OAuth redirect URL above;
+- copy the Client ID and one Client Secret;
+- generate the Shared Secret used for encrypted Custom Page user context;
+- generate the token encryption key locally with `openssl rand -base64 32`;
+- store all four values in backend secrets only.
 
-Recommended minimum for the demo: two agents and 8-12 calls total, including clear successes, partial outcomes, and failures.
+Multiple Client Keys allow independent credential rotation or environments. The assignment
+uses one current key. Never place any secret in a `VITE_*` variable, browser bundle,
+screenshot, or demo recording.
 
-Test calls are marked as trial/test calls and HighLevel excludes them from its own production analytics. The Copilot should retain the `trialCall` flag, label test calls in the UI, and allow them in the assignment demo.
+### 5. Webhook
 
-### 3. Create the private Marketplace app
+In **Advanced Settings > Webhooks**:
 
-- [ ] Sign in to the HighLevel Developer Marketplace.
-- [ ] Open **My Apps** and select **Create App**.
-- [ ] Set the app name to **Voice AI Observability Copilot**.
-- [ ] Set the app type to **Private** for the assignment and sandbox testing.
-- [ ] Set **Target User** to **Sub-account**. This choice cannot be changed after creation.
-- [ ] Set **Who Can Install** to **Both Agency and Sub-account** unless the test account imposes a different choice.
-- [ ] Leave bulk installation at the required/default value for a new app. The assignment only installs into one sandbox location.
-- [ ] Use a non-production listing and add a recognizable icon, short description, and screenshots when the dashboard is ready.
+- set the webhook URL shown above;
+- enable `VoiceAiCallEnd`;
+- save the version.
 
-Do not enable Custom JS. The selected integration is a Marketplace Custom Page.
+Install/update/uninstall lifecycle messages are platform lifecycle events and may not appear
+as separate selectable checkboxes. The same receiver accepts supported lifecycle events.
+Every incoming event is verified with HighLevel's Ed25519 signature over the exact raw bytes,
+then stored idempotently before background processing.
 
-### 4. Add the Custom Page module
+### 6. Create and install a test version
 
-In the app's **Build > Modules** area:
+1. Save a Marketplace version containing the final module, scopes, redirect, and webhook.
+2. Generate the standard **Test Link** for the sandbox Location ID.
+3. Open it while signed into the App Test Account.
+4. Select/confirm the intended Sub-account and authorize the app.
+5. Confirm the callback lands on `/?oauth=connected&locationId=...`.
+6. Open the Location and confirm **Voice AI Observability Copilot** appears in navigation.
+7. Open the page and confirm it renders inside HighLevel without an iframe/CSP error.
 
-- [ ] Add a **Custom Page**.
-- [ ] Name the navigation entry **Voice AI Observability Copilot**.
-- [ ] Set both Live URL and Testing URL to `https://dng3naypayh7.cloudfront.net/`.
-- [ ] Place it in the sub-account's left navigation.
-- [ ] Add an icon if the Marketplace builder requests one.
+Use the standard link for the normal HighLevel-branded sandbox. A white-label link is only
+for an Agency's custom branded domain; it does not change OAuth behavior or application data.
 
-HighLevel can substitute `{{location.id}}` into a Custom Page query string, but the backend must not trust a plain query parameter for authorization. Use signed user context for the authenticated location and user.
+## Runtime behavior after installation
 
-### 5. Configure minimum OAuth scopes
+### OAuth and tenant storage
 
-In **Build > Advanced Settings > Auth**, add:
+The callback exchanges the one-time code at LeadConnector, encrypts access and refresh tokens,
+and persists the installation hierarchy. A Location token is stored directly. If an Agency
+installer receives a Company token, the backend exchanges it for the approved Location token.
+Refresh-token rotation updates the encrypted pair atomically.
 
-| Scope                           | Why it is needed                                                         |
-| ------------------------------- | ------------------------------------------------------------------------ |
-| `voice-ai-dashboard.readonly`   | List/get call logs and receive `VoiceAiCallEnd`                          |
-| `voice-ai-agents.readonly`      | List/get Voice AI agents and their configuration                         |
-| `voice-ai-agent-goals.readonly` | Read configured Voice AI action/goal details when required by the rubric |
+### Existing-call sync
 
-Do not request agent, contact, or workflow write scopes. The Copilot recommends changes but does not apply them automatically.
+Build the workspace and run the sync command with backend environment variables loaded:
 
-Agency users can receive a Company token even when the app targets Sub-accounts.
-The backend exchanges that token for the single approved Location through the v3
-`/oauth/location-token` endpoint. A Sub-account user receives a Location token
-directly. `oauth.write` is not part of this app's minimum scope set: the exchange
-uses the granted Company access token and selected Company/Location identifiers.
-Only add a scope when a concrete API endpoint used by the app documents it.
+```bash
+pnpm build
+pnpm --filter @copilot/api sync:location -- <highlevel-location-id>
+```
+
+The sync reads Voice AI agents and call logs, stores the current agent prompt/configuration,
+and writes one synthetic webhook inbox/outbox record per new call. It is convergent: running
+it again does not create duplicate calls. Current assignment scope processes the page returned
+by HighLevel; scheduled pagination and watermark reconciliation are explicit production
+increments rather than hidden claims.
+
+### Future-call ingestion
+
+```mermaid
+sequenceDiagram
+    participant HL as HighLevel
+    participant API as Marketplace API
+    participant DB as PostgreSQL
+    participant IQ as Ingestion SQS
+    participant IW as Ingestion worker
+    participant AQ as Analysis SQS
+    participant AW as Analysis worker
+
+    HL->>API: VoiceAiCallEnd + Ed25519 signature
+    API->>API: Verify exact request bytes
+    API->>DB: Insert inbox and outbox once
+    API-->>HL: 200 received
+    DB->>IQ: Outbox publishes call identifiers
+    IQ->>IW: Ingestion request
+    IW->>DB: Normalize agent, call, turns, actions
+    IW->>AQ: Analysis request via outbox
+    AQ->>AW: Checklist job
+    AW->>DB: Current criteria results and evidence
+```
 
-Configure scopes before making the version live. HighLevel locks scopes on a live version; changing them requires a new draft version.
-
-### 6. Add the OAuth redirect URL
-
-Still under **Advanced Settings > Auth**:
-
-- [x] Add exactly `https://dng3naypayh7.cloudfront.net/api/leadconnector/oauth`.
-- [ ] Confirm it is HTTPS.
-- [ ] Confirm there is no trailing-slash mismatch between HighLevel and the backend.
-
-When the app is installed, HighLevel redirects here with an authorization code. The backend exchanges it through `POST https://services.leadconnectorhq.com/oauth/token` and stores the returned tokens encrypted.
-
-### 7. Generate Marketplace secrets
-
-Under **Manage > Secrets**:
-
-- [ ] Create a Client Key.
-- [ ] Copy the Client ID.
-- [ ] Copy the Client Secret immediately; HighLevel will not show it again.
-- [ ] Generate the Shared Secret used for signed Custom Page user context.
-- [ ] Store all three only in the backend deployment's secret manager.
-
-These values must never appear in Vue code, `VITE_*` variables, Git, screenshots, or Loom recordings.
-
-### 8. Configure webhooks
-
-Under **Advanced Settings > Webhooks**:
-
-- [ ] Enable `VoiceAiCallEnd`.
-- [x] Set its URL to `https://dng3naypayh7.cloudfront.net/api/leadconnector/webhook`.
-- [ ] If available, route `AppUninstall` to the same endpoint so an installation can be disabled and its tokens revoked/removed.
-- [ ] Confirm `voice-ai-dashboard.readonly` is present; it is required for `VoiceAiCallEnd`.
-
-Lifecycle events such as install/update/uninstall are platform lifecycle events;
-they may not appear as individually selectable webhook checkboxes. Configure the
-single receiver URL, install the saved app version, and verify actual deliveries in
-Marketplace webhook logs. The OAuth callback and lifecycle event are independently
-idempotent inputs to the installation model.
-
-The backend verifies `X-GHL-Signature` with HighLevel's Ed25519 public key over the
-exact raw request body. The legacy RSA `X-WH-Signature` mechanism is deprecated;
-this implementation accepts only the current Ed25519 signature.
-
-### 9. Configure signed Custom Page context
-
-No additional page URL token should be created manually. The manual step is generating the Shared Secret in step 7.
-
-At runtime:
-
-1. Vue sends `REQUEST_USER_DATA` to the HighLevel parent window using `postMessage`.
-2. HighLevel returns an encrypted user-context payload.
-3. Vue sends that opaque payload to the NestJS backend.
-4. The backend decrypts/validates it with the Shared Secret.
-5. The backend creates a short-lived application session bound to the validated user and `activeLocation`.
-
-The location from the signed context must match an installed location in our database before dashboard data is returned.
-
-### 10. Create a testable app version and install it
-
-- [ ] Open **Manage > Versions**.
-- [ ] Create/save a version containing the final scopes, redirect URL, webhook, and Custom Page.
-- [ ] Open the version's actions menu and choose **Test Link**.
-- [ ] Enter the sandbox Location ID.
-- [ ] Copy and open the generated installation link.
-- [ ] Complete the installation for that sub-account.
-- [ ] Verify that the OAuth callback succeeds.
-- [ ] Verify that **Observability Copilot** appears in the sub-account navigation.
-- [ ] Verify that the embedded page loads without iframe or Content Security Policy errors.
-
-## Automated application lifecycle
-
-### Installation and OAuth
-
-1. HighLevel sends a one-time authorization code to the exact registered callback URL.
-2. Exchange the authorization code for an access/refresh token pair.
-3. Inspect the returned `userType`:
-   - `Location`: store the encrypted token pair against `locationId` and continue.
-   - `Company`: use the documented installed-location and Location-token exchange flow before calling Voice AI APIs.
-4. Save token expiry and rotate the stored refresh token whenever it is used.
-5. Trigger initial synchronization.
-
-The development PIT is not part of this installation flow. It is a local fallback for one known location.
-
-### Initial synchronization
-
-For the installed location, the backend:
-
-1. Calls `GET /voice-ai/agents?locationId=...`.
-2. Calls `GET /voice-ai/agents/:agentId?locationId=...` for detailed agent configuration.
-3. Creates or updates each local agent record.
-4. Compiles an immutable KPI rubric version from each agent's goals, instructions,
-   and actions.
-5. Paginates through `GET /voice-ai/dashboard/call-logs?locationId=...`.
-6. Writes a synthetic durable inbox/outbox event for each call so historical and
-   realtime data use the same ingestion worker.
-7. Queues every call without a completed analysis.
-
-The manual sync endpoint currently performs this convergence path. Lifecycle
-events create durable backfill jobs, but the scheduled paginated job executor is
-still pending.
-
-### New-call ingestion
-
-When HighLevel sends `VoiceAiCallEnd`, the backend:
-
-1. Reads the raw request body before JSON transformation.
-2. Verifies `X-GHL-Signature` using Ed25519.
-3. Validates the payload schema and installed `locationId`.
-4. Deduplicates by `webhookId` when available and by call ID as the domain-level fallback.
-5. Persists the webhook/call and analysis job in one durable transaction.
-6. Returns `2xx` quickly.
-7. Processes transcript analysis outside the request.
-
-If durable persistence is unavailable, return a retryable error instead of acknowledging and losing the event. HighLevel retries failed deliveries with exponential backoff and jitter.
-
-### Transcript analysis
-
-The worker:
-
-1. Loads the call, agent, and rubric version.
-2. Sends the transcript and structured KPI rubric to the configured model provider.
-3. Validates the structured response.
-4. Confirms every quoted evidence span exists in the transcript.
-5. Stores per-KPI results, severity, explanation, recommendation, model, prompt/rubric version, latency, token usage, and estimated cost.
-6. Exposes per-call results in the location and agent rollups.
-
-Cross-call issue clustering and cohort-level recommendation confidence are not yet
-implemented; they are tracked explicitly in the implementation-status document.
-
-The app does not automatically patch the HighLevel agent.
-
-### Dashboard access
-
-1. The iframe obtains signed HighLevel user context.
-2. The backend verifies the context and installation.
-3. Vue requests only data for the active location.
-4. The overview shows agent comparisons, call volume, goal completion, and unresolved issues.
-5. Agent detail shows KPI trends, recurring issues, exact transcript evidence, and recommendations.
-
-### Recovery and reconciliation
-
-A scheduled reconciliation job periodically requests call logs newer than the last successful watermark. This repairs missed webhooks and makes webhook delivery an acceleration path rather than the only source of truth.
-
-Repeated webhooks and repeated backfills must produce one call and one active analysis per rubric/model version.
-
-### Uninstall
-
-On an uninstall event:
-
-1. Mark the installation disabled immediately.
-2. Stop sync and analysis jobs for the location.
-3. Revoke/delete stored tokens where the platform supports it.
-4. Apply the documented data-retention policy rather than silently retaining customer transcripts forever.
+The webhook request never waits for a model. SQS retries transient failures and sends exhausted
+messages to the matching DLQ. Queue payloads contain internal identifiers rather than transcript
+content.
+
+### Call Analysis
+
+The analysis worker loads only:
+
+- transcript turns;
+- executed Call Action events supplied by HighLevel;
+- the Voice Agent's current Success Criterion descriptions.
+
+One structured model request independently returns `pass`, `fail`, `not_applicable`, or
+`unknown` for every criterion. A failure is downgraded to `unknown` unless it cites a real
+stored transcript turn or action event. The agent prompt is deliberately excluded because
+the system cannot prove which current prompt handled a historical call.
+
+Every new agent receives a small universal checklist on first analysis. In the agent page,
+the user can add criteria derived from that agent's goal or script, edit a criterion's full
+description, or delete criteria. A criterion name is its stable per-agent aggregation key;
+the description is the complete evaluator instruction.
+
+### Agent recommendation
+
+Recommendations are agent-level and user-requested. For one failed criterion, the worker:
+
+1. samples at most the 20 most recent current failed calls;
+2. loads their failure reasons and validated evidence;
+3. compares the concern with the **current** agent prompt;
+4. returns no recommendation when the prompt already covers it or evidence is uncertain;
+5. otherwise stores one concise instruction that can be pasted into the prompt.
+
+There is at most one replaceable recommendation per agent and criterion. It is never applied
+through the HighLevel API. A synced prompt change invalidates stored recommendations, and a
+late response for an older prompt/request cannot replace current guidance.
+
+## UI verification
+
+### Fleet dashboard
+
+- Voice Agents from the active Location are listed.
+- Calls analyzed, average duration, and total failed criterion results are visible.
+- Search filters by agent name.
+
+### Agent page
+
+- Call log and Success Criteria are visible together.
+- Selecting a criterion filters the call log to calls that failed it.
+- Criteria can be created, edited, and deleted.
+- A call or the last 24 hours/7 days can be reanalyzed.
+- Recommendation generation is available only for a failed criterion.
+- Generated guidance states the criterion, supporting-call count, reason, and copy-paste text.
+
+### Call page
+
+- The transcript is the primary content.
+- Only failed criteria appear as flagged issues.
+- **View evidence** scrolls to and highlights the exact cited transcript line.
+- The right-side context stays available in a collapsible strip on smaller widths.
+- There is no call-level recommendation panel.
+
+The brief's example of highlighting segments that need human review or script training is
+implemented through failed criteria plus validated evidence navigation, not a separate queue of
+ambiguous "actions."
+
+## End-to-end acceptance checklist
+
+### Installation and access
+
+- [ ] OAuth callback stores the intended Location installation without exposing tokens.
+- [ ] Custom Page appears inside the sandbox Location.
+- [ ] Signed user context resolves the same Location as the grant.
+- [ ] Changing a query-string Location ID does not cross the session boundary.
+
+### Existing calls
+
+- [ ] Historical sync imports all calls needed for the demo.
+- [ ] A second sync creates no duplicate agent or call rows.
+- [ ] Calls progress from ingestion to current checklist results.
+
+### New call
+
+- [ ] Complete a Voice AI Web Call.
+- [ ] Confirm `VoiceAiCallEnd` appears in Marketplace webhook logs.
+- [ ] Confirm the endpoint returns `2xx` promptly.
+- [ ] Confirm inbox/outbox, ingestion queue, normalized call, analysis queue, and results.
+- [ ] Redeliver/requeue and confirm one call remains.
+
+### Analysis and recommendation
+
+- [ ] Every call shows all applicable Success Criteria results.
+- [ ] Every failure links to exact stored evidence.
+- [ ] A custom criterion is evaluated after automatic reanalysis.
+- [ ] Failed criteria roll up to the correct agent and dashboard counts.
+- [ ] Requested guidance is either suppressed as covered/uncertain or is directly pasteable.
+- [ ] Deleting guidance removes it; regenerating replaces it.
+
+### Operations and security
+
+- [ ] Invalid webhook signatures are rejected.
+- [ ] Browser assets contain no PIT, OAuth, shared, model, or database secret.
+- [ ] API readiness checks PostgreSQL.
+- [ ] SQS/DLQ and API-health CloudWatch alarms exist.
+- [ ] Containers run as non-root with read-only filesystems.
 
 ## Configuration ownership
 
-| Configuration                 | Where it is set                      | Owner                        | Application support |
-| ----------------------------- | ------------------------------------ | ---------------------------- | ------------------- |
-| Location ID / local PIT       | HighLevel sub-account / local `.env` | Developer; development only  | Supported fallback  |
-| Marketplace distribution      | Developer Marketplace                | Manual                       | Required externally |
-| Custom Page URL and placement | Marketplace app module               | Manual                       | Runtime implemented |
-| OAuth scopes and redirect     | Marketplace advanced settings        | Manual                       | Runtime implemented |
-| Client ID/secret              | Marketplace secrets                  | Manual                       | Runtime implemented |
-| Shared Secret                 | Marketplace secrets                  | Manual                       | Runtime implemented |
-| Webhook events and URL        | Marketplace advanced settings        | Manual                       | Runtime implemented |
-| Access/refresh tokens         | Application database                 | Automatic after install      | Implemented         |
-| Agent/call synchronization    | API plus ingestion worker            | Automatic/manual convergence | Partial automation  |
-| KPI rubrics and analyses      | Analysis worker                      | Automatic                    | Implemented v1      |
+| Configuration                                      | Owner                                   | Status                  |
+| -------------------------------------------------- | --------------------------------------- | ----------------------- |
+| Marketplace app/version, Custom Page, scopes, URLs | Manual in HighLevel                     | Required external setup |
+| Client and shared secrets                          | Manual creation, backend secret storage | Implemented             |
+| OAuth tokens and Location grants                   | Application                             | Implemented             |
+| Historical sync trigger                            | Operator                                | Implemented, manual     |
+| Real-time webhook pipeline                         | Application                             | Implemented             |
+| Universal and user-defined criteria                | Application user                        | Implemented             |
+| Checklist evaluation and evidence validation       | Analysis worker                         | Implemented             |
+| Prompt recommendation generation                   | Application user + analysis worker      | Implemented, on demand  |
+| Applying a recommended change                      | HighLevel user                          | Intentionally manual    |
 
-The repository cannot prove the current state of the external Marketplace builder;
-use the verification checklist and Marketplace logs rather than this table as an
-external configuration audit.
-
-## Backend environment
-
-| Variable                              | Purpose                                                                    |
-| ------------------------------------- | -------------------------------------------------------------------------- |
-| `HIGHLEVEL_CLIENT_ID`                 | Marketplace OAuth client ID                                                |
-| `HIGHLEVEL_CLIENT_SECRET`             | Marketplace OAuth client secret                                            |
-| `HIGHLEVEL_REDIRECT_URI`              | Exact registered callback URL                                              |
-| `HIGHLEVEL_POST_INSTALL_REDIRECT_URI` | Trusted frontend destination after a successful callback                   |
-| `HIGHLEVEL_TOKEN_ENCRYPTION_KEY`      | Base64 32-byte key used to encrypt tokens at rest                          |
-| `HIGHLEVEL_APP_SHARED_SECRET`         | Decrypts signed Custom Page user context on the backend                    |
-| `DATABASE_URL`                        | PostgreSQL connection                                                      |
-| `SUB_ACCOUNT_LOCATION_ID`             | Optional local-development location and default dashboard query            |
-| `SUB_ACCOUNT_PIT`                     | Optional local-development fallback; never used in production              |
-| `AWS_REGION`                          | SQS region                                                                 |
-| `SQS_INGESTION_QUEUE_URL`             | Call/lifecycle ingestion queue                                             |
-| `SQS_ANALYSIS_QUEUE_URL`              | Transcript-analysis queue                                                  |
-| `SQS_ENDPOINT`                        | Optional LocalStack endpoint; omit in AWS                                  |
-| `OUTBOX_PUBLISHER_ENABLED`            | Enables database outbox delivery; required in production                   |
-| `LLM_PROVIDER`                        | `none`, `openai-compatible`, or local/demo-only `opencode`                 |
-| `LLM_PROVIDER_ID`                     | Stable provider label persisted with the model result                      |
-| `LLM_BASE_URL`                        | OpenAI-compatible `/v1` base URL                                           |
-| `LLM_MODEL`                           | Model identifier exposed by the selected endpoint                          |
-| `LLM_API_KEY`                         | Bearer credential when required; store it in the deployment secret manager |
-| `LLM_STRUCTURED_OUTPUT_MODE`          | `json_schema` preferred; `json_object` for limited compatible servers      |
-| `LLM_MAX_OUTPUT_TOKENS`               | Maximum tokens available to one structured evaluation response             |
-| `LLM_REQUEST_TIMEOUT_MS`              | Maximum duration of one compatible-provider request                        |
-| `OPENCODE_BASE_URL`                   | Local OpenCode server URL when `LLM_PROVIDER=opencode`                     |
-| `OPENCODE_SERVER_USERNAME`            | OpenCode server Basic Auth username                                        |
-| `OPENCODE_SERVER_PASSWORD`            | Separate OpenCode server password; never the upstream OAuth token          |
-| `OPENCODE_REQUEST_TIMEOUT_MS`         | Maximum duration of an OpenCode server request                             |
-
-Generate the token key once with `openssl rand -base64 32` and store it in the deployment's secret manager. Losing or changing this key makes existing installations unreadable and requires reinstalling them.
-
-The implemented endpoints are:
-
-| Endpoint                                             | Purpose                                                            |
-| ---------------------------------------------------- | ------------------------------------------------------------------ |
-| `GET /api/leadconnector/oauth`                       | Exchanges the install code and persists encrypted tokens           |
-| `GET /api/leadconnector/oauth/callback`              | Backward-compatible alias for an earlier test redirect             |
-| `GET /api/leadconnector/oauth/status?locationId=...` | Returns connection mode and expiry, never token material           |
-| `POST /api/leadconnector/webhook`                    | Verifies and durably accepts lifecycle and call-end events         |
-| `POST /api/leadconnector/session`                    | Exchanges signed iframe context for a short-lived app session      |
-| `POST /api/pipeline/sync`                            | Feeds historical calls into the canonical durable ingest path      |
-| `GET /api/pipeline`                                  | Reads the legacy pipeline projection for the active location       |
-| `GET /api/observability`                             | Reads metrics, calls, agents, recommendations, and Recommendations |
-| `GET /api/health`                                    | Process health endpoint                                            |
-
-Dashboard and pipeline routes use a Bearer session derived from signed HighLevel
-context. A `locationId` query fallback exists only outside production for local
-development. `SUB_ACCOUNT_LOCATION_ID` and `SUB_ACCOUNT_PIT` remain development-
-only fallbacks. No secret may use a `VITE_` prefix.
-
-## Manual verification checklist
-
-### Installation
-
-- [ ] Test link installs the intended app version into the intended Location ID.
-- [ ] OAuth callback stores a Location installation without exposing tokens.
-- [ ] Custom Page appears in the sub-account navigation.
-- [ ] Signed user context resolves the same active location as the installation.
-
-### Backfill
-
-- [ ] The app lists both sandbox agents.
-- [ ] Historical test calls appear with `trialCall` visibly labelled.
-- [ ] Running sync twice creates no duplicate agents, calls, or analyses.
-
-### Real-time post-call path
-
-- [ ] End a Web Call.
-- [ ] Confirm `VoiceAiCallEnd` in **Marketplace > Insights > Logs > Webhooks**.
-- [ ] Confirm the endpoint returns `2xx` quickly.
-- [ ] Confirm the call progresses through queued, analyzing, and completed states.
-- [ ] Confirm dashboard metrics update without a full reinstall or manual import.
-
-### Analysis quality
-
-- [ ] Every finding names a configured KPI.
-- [ ] Every evidence quote can be found in the transcript.
-- [ ] An agent-level recommendation references a repeated pattern across multiple calls.
-- [ ] Failed model responses are retryable and visible rather than silently discarded.
-
-### Security and embedding
-
-- [ ] PIT, OAuth secrets, refresh tokens, Shared Secret, and model keys never appear in browser assets.
-- [ ] A forged location query parameter cannot access another location's data.
-- [ ] An invalid webhook signature is rejected.
-- [ ] An iframe load is not blocked by `X-Frame-Options` or `frame-ancestors`.
-
-## Official HighLevel references
+## Relevant HighLevel documentation
 
 - [Create a Marketplace App](https://marketplace.gohighlevel.com/docs/oauth/CreateMarketplaceApp/)
-- [Marketplace App Distribution Model](https://marketplace.gohighlevel.com/docs/oauth/AppDistribution/)
-- [Installing and Testing a Marketplace App](https://marketplace.gohighlevel.com/docs/2023-02-21/oauth/TestingApp/)
+- [App distribution](https://marketplace.gohighlevel.com/docs/oauth/AppDistribution/)
+- [Install and test an app](https://marketplace.gohighlevel.com/docs/2023-02-21/oauth/TestingApp/)
 - [Custom Pages](https://marketplace.gohighlevel.com/docs/2023-02-21/marketplace-modules/CustomPages/)
-- [User Context in Marketplace Apps](https://marketplace.gohighlevel.com/docs/2021-07-28/other/user-context-marketplace-apps/)
-- [OAuth Access Token](https://marketplace.gohighlevel.com/docs/ghl/oauth/get-access-token/)
-- [Handling Sub-Account Target Tokens](https://marketplace.gohighlevel.com/docs/Authorization/TargetUserSubAccount/)
-- [OAuth Scopes](https://marketplace.gohighlevel.com/docs/Authorization/Scopes/)
-- [Voice AI Call Logs](https://marketplace.gohighlevel.com/docs/ghl/voice-ai/dashboard/)
+- [Marketplace user context](https://marketplace.gohighlevel.com/docs/2021-07-28/other/user-context-marketplace-apps/)
+- [Sub-account target authorization](https://marketplace.gohighlevel.com/docs/Authorization/TargetUserSubAccount/)
+- [OAuth scopes](https://marketplace.gohighlevel.com/docs/Authorization/Scopes/)
+- [Voice AI call logs](https://marketplace.gohighlevel.com/docs/ghl/voice-ai/dashboard/)
 - [VoiceAiCallEnd](https://marketplace.gohighlevel.com/docs/2021-04-15/webhook/VoiceAiCallEnd/)
-- [Webhook Integration Guide](https://marketplace.gohighlevel.com/docs/webhook/WebhookIntegrationGuide/)
-- [Create Voice AI Agents](https://help.gohighlevel.com/support/solutions/articles/155000004107-creating-voice-ai-agents)
-- [Test Voice AI Agents](https://help.gohighlevel.com/support/solutions/articles/155000004108-testing-voice-ai-agents)
+- [Webhook integration guide](https://marketplace.gohighlevel.com/docs/webhook/WebhookIntegrationGuide/)

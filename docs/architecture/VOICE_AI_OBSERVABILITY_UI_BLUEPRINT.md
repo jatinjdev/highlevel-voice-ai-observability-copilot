@@ -1,8 +1,11 @@
 # Voice AI Observability UI blueprint
 
-Status: canonical target specification
+Status: superseded by the implemented checklist-only UI and ADR 0007
 Date: 2026-07-17
 Scope: visible product behavior only
+
+> Historical design reference. Sections describing call-level recommendations, recommendation
+> tiers, or the previous analysis vocabulary are not current product requirements.
 
 ## 1. Purpose
 

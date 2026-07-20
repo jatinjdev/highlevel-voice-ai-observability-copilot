@@ -234,25 +234,22 @@ export const voiceAgents = pgTable(
   ],
 );
 
-export const agentConfigSnapshots = pgTable(
-  'agent_config_snapshots',
+export const voiceAgentConfigurations = pgTable(
+  'voice_agent_configurations',
   {
-    id: uuid('id').defaultRandom().primaryKey(),
     agentId: uuid('agent_id')
+      .primaryKey()
       .notNull()
       .references(() => voiceAgents.id, { onDelete: 'cascade' }),
-    sourceHash: varchar('source_hash', { length: 64 }).notNull(),
-    source: varchar('source', { length: 24 }).notNull(),
-    configuration: jsonb('configuration').$type<Record<string, unknown>>().notNull(),
-    evidenceCapabilities: jsonb('evidence_capabilities').$type<Record<string, unknown>>().notNull(),
-    capturedAt: timestamp('captured_at', { withTimezone: true }).defaultNow().notNull(),
-    validFrom: timestamp('valid_from', { withTimezone: true }).defaultNow().notNull(),
-    validTo: timestamp('valid_to', { withTimezone: true }),
+    currentPrompt: text('current_prompt'),
+    promptHash: varchar('prompt_hash', { length: 64 }),
+    configuration: jsonb('configuration').$type<Record<string, unknown>>().default({}).notNull(),
+    syncStatus: varchar('sync_status', { length: 24 }).default('unknown').notNull(),
+    syncedAt: timestamp('synced_at', { withTimezone: true }),
+    criteriaInitializedAt: timestamp('criteria_initialized_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [
-    uniqueIndex('agent_config_snapshots_agent_hash_idx').on(table.agentId, table.sourceHash),
-    index('agent_config_snapshots_agent_valid_idx').on(table.agentId, table.validTo),
-  ],
+  (table) => [index('voice_agent_configurations_sync_idx').on(table.syncStatus, table.syncedAt)],
 );
 
 export const successCriteria = pgTable(
@@ -262,10 +259,10 @@ export const successCriteria = pgTable(
     agentId: uuid('agent_id')
       .notNull()
       .references(() => voiceAgents.id, { onDelete: 'cascade' }),
-    stableKey: varchar('stable_key', { length: 96 }).notNull(),
-    origin: varchar('origin', { length: 32 }).notNull(),
-    criterionClass: varchar('criterion_class', { length: 24 }).notNull(),
-    lifecycleState: varchar('lifecycle_state', { length: 24 }).default('draft').notNull(),
+    name: varchar('name', { length: 96 }).notNull(),
+    normalizedName: varchar('normalized_name', { length: 96 }).notNull(),
+    description: text('description').notNull(),
+    source: varchar('source', { length: 24 }).default('user').notNull(),
     createdByUserId: uuid('created_by_user_id').references(() => marketplaceUsers.id, {
       onDelete: 'set null',
     }),
@@ -273,108 +270,8 @@ export const successCriteria = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    uniqueIndex('success_criteria_agent_key_idx').on(table.agentId, table.stableKey),
-    index('success_criteria_agent_state_idx').on(table.agentId, table.lifecycleState),
-  ],
-);
-
-export const successCriterionVersions = pgTable(
-  'success_criterion_versions',
-  {
-    id: uuid('id').defaultRandom().primaryKey(),
-    criterionId: uuid('criterion_id')
-      .notNull()
-      .references(() => successCriteria.id, { onDelete: 'cascade' }),
-    version: integer('version').notNull(),
-    title: text('title').notNull(),
-    naturalLanguageRule: text('natural_language_rule').notNull(),
-    applicabilityDefinition: jsonb('applicability_definition')
-      .$type<Record<string, unknown>>()
-      .notNull(),
-    evaluationInstructions: text('evaluation_instructions').notNull(),
-    requiredEvidence: jsonb('required_evidence').$type<string[]>().default([]).notNull(),
-    severityPolicy: jsonb('severity_policy').$type<Record<string, unknown>>().notNull(),
-    sourceReferences: jsonb('source_references').$type<string[]>().default([]).notNull(),
-    allowedRecommendationTargetIds: text('allowed_recommendation_target_ids')
-      .array()
-      .default(sql`ARRAY[]::text[]`)
-      .notNull(),
-    compilerVersion: varchar('compiler_version', { length: 48 }).notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex('success_criterion_versions_criterion_version_idx').on(
-      table.criterionId,
-      table.version,
-    ),
-  ],
-);
-
-export const criterionSets = pgTable(
-  'criterion_sets',
-  {
-    id: uuid('id').defaultRandom().primaryKey(),
-    agentId: uuid('agent_id')
-      .notNull()
-      .references(() => voiceAgents.id, { onDelete: 'cascade' }),
-    version: integer('version').notNull(),
-    fingerprint: varchar('fingerprint', { length: 64 }).notNull(),
-    active: boolean('active').default(false).notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex('criterion_sets_agent_version_idx').on(table.agentId, table.version),
-    uniqueIndex('criterion_sets_agent_fingerprint_idx').on(table.agentId, table.fingerprint),
-    uniqueIndex('criterion_sets_one_active_idx')
-      .on(table.agentId)
-      .where(sql`${table.active} = true`),
-  ],
-);
-
-export const criterionSetMembers = pgTable(
-  'criterion_set_members',
-  {
-    criterionSetId: uuid('criterion_set_id')
-      .notNull()
-      .references(() => criterionSets.id, { onDelete: 'cascade' }),
-    criterionVersionId: uuid('criterion_version_id')
-      .notNull()
-      .references(() => successCriterionVersions.id, { onDelete: 'restrict' }),
-    displayOrder: integer('display_order').notNull(),
-  },
-  (table) => [
-    primaryKey({ columns: [table.criterionSetId, table.criterionVersionId] }),
-    uniqueIndex('criterion_set_members_order_idx').on(table.criterionSetId, table.displayOrder),
-  ],
-);
-
-export const analysisReleases = pgTable(
-  'analysis_releases',
-  {
-    id: uuid('id').defaultRandom().primaryKey(),
-    releaseKey: varchar('release_key', { length: 64 }).notNull(),
-    version: varchar('version', { length: 64 }).notNull(),
-    semanticPromptVersion: varchar('semantic_prompt_version', { length: 64 }).notNull(),
-    evaluatorVersion: varchar('evaluator_version', { length: 64 }).notNull(),
-    deterministicEvaluatorVersion: varchar('deterministic_evaluator_version', {
-      length: 64,
-    }).notNull(),
-    criterionCompilerVersion: varchar('criterion_compiler_version', { length: 64 }).notNull(),
-    recommendationCatalogueVersion: varchar('recommendation_catalogue_version', {
-      length: 48,
-    }).notNull(),
-    outputSchemaVersion: integer('output_schema_version').notNull(),
-    provider: varchar('provider', { length: 48 }),
-    model: varchar('model', { length: 128 }),
-    modelParameters: jsonb('model_parameters')
-      .$type<Record<string, unknown>>()
-      .default({})
-      .notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex('analysis_releases_key_idx').on(table.releaseKey),
-    index('analysis_releases_version_idx').on(table.version),
+    uniqueIndex('success_criteria_agent_name_idx').on(table.agentId, table.normalizedName),
+    index('success_criteria_agent_created_idx').on(table.agentId, table.createdAt),
   ],
 );
 
@@ -388,9 +285,6 @@ export const voiceCalls = pgTable(
     locationId: uuid('location_id')
       .notNull()
       .references(() => locations.id, { onDelete: 'restrict' }),
-    agentConfigSnapshotId: uuid('agent_config_snapshot_id')
-      .notNull()
-      .references(() => agentConfigSnapshots.id, { onDelete: 'restrict' }),
     sourceWebhookInboxId: uuid('source_webhook_inbox_id').references(() => webhookInbox.id, {
       onDelete: 'restrict',
     }),
@@ -455,15 +349,6 @@ export const callAnalysisRuns = pgTable(
     callId: uuid('call_id')
       .notNull()
       .references(() => voiceCalls.id, { onDelete: 'cascade' }),
-    configSnapshotId: uuid('config_snapshot_id')
-      .notNull()
-      .references(() => agentConfigSnapshots.id, { onDelete: 'restrict' }),
-    criterionSetId: uuid('criterion_set_id')
-      .notNull()
-      .references(() => criterionSets.id, { onDelete: 'restrict' }),
-    analysisReleaseId: uuid('analysis_release_id')
-      .notNull()
-      .references(() => analysisReleases.id, { onDelete: 'restrict' }),
     runSequence: integer('run_sequence').notNull(),
     runReason: varchar('run_reason', { length: 24 }).default('initial').notNull(),
     inputFingerprint: varchar('input_fingerprint', { length: 64 }).notNull(),
@@ -505,18 +390,16 @@ export const criterionResults = pgTable(
     analysisRunId: uuid('analysis_run_id')
       .notNull()
       .references(() => callAnalysisRuns.id, { onDelete: 'cascade' }),
-    criterionVersionId: uuid('criterion_version_id')
+    criterionId: uuid('criterion_id')
       .notNull()
-      .references(() => successCriterionVersions.id, { onDelete: 'restrict' }),
+      .references(() => successCriteria.id, { onDelete: 'cascade' }),
     result: varchar('result', { length: 24 }).notNull(),
     rationale: text('rationale').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    uniqueIndex('criterion_results_run_criterion_idx').on(
-      table.analysisRunId,
-      table.criterionVersionId,
-    ),
+    uniqueIndex('criterion_results_run_criterion_idx').on(table.analysisRunId, table.criterionId),
+    index('criterion_results_criterion_result_idx').on(table.criterionId, table.result),
     index('criterion_results_result_idx').on(table.result),
   ],
 );
@@ -532,6 +415,19 @@ export const criterionResultEvidence = pgTable(
       .references(() => callTurns.id, { onDelete: 'restrict' }),
   },
   (table) => [primaryKey({ columns: [table.criterionResultId, table.callTurnId] })],
+);
+
+export const criterionResultActionEvidence = pgTable(
+  'criterion_result_action_evidence',
+  {
+    criterionResultId: uuid('criterion_result_id')
+      .notNull()
+      .references(() => criterionResults.id, { onDelete: 'cascade' }),
+    callActionEventId: uuid('call_action_event_id')
+      .notNull()
+      .references(() => callActionEvents.id, { onDelete: 'restrict' }),
+  },
+  (table) => [primaryKey({ columns: [table.criterionResultId, table.callActionEventId] })],
 );
 
 export const analysisBatches = pgTable(
@@ -583,28 +479,53 @@ export const analysisBatchItems = pgTable(
   ],
 );
 
-export const recommendations = pgTable(
-  'recommendations',
+export const agentRecommendations = pgTable(
+  'agent_recommendations',
   {
     id: uuid('id').defaultRandom().primaryKey(),
     agentId: uuid('agent_id')
       .notNull()
       .references(() => voiceAgents.id, { onDelete: 'cascade' }),
-    criterionResultId: uuid('criterion_result_id')
+    criterionId: uuid('criterion_id')
       .notNull()
-      .references(() => criterionResults.id, { onDelete: 'cascade' }),
-    targetId: varchar('target_id', { length: 128 }).notNull(),
-    type: varchar('type', { length: 32 }).notNull(),
-    title: text('title').notNull(),
-    reason: text('reason').notNull(),
-    proposedChange: text('proposed_change').notNull(),
-    uiPath: text('ui_path'),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+      .references(() => successCriteria.id, { onDelete: 'cascade' }),
+    headline: text('headline').notNull(),
+    explanation: text('explanation').notNull(),
+    promptAddition: text('prompt_addition').notNull(),
+    promptHash: varchar('prompt_hash', { length: 64 }).notNull(),
+    sampledFailureCount: integer('sampled_failure_count').notNull(),
+    generatedAt: timestamp('generated_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    index('recommendations_agent_idx').on(table.agentId),
-    uniqueIndex('recommendations_result_target_idx').on(table.criterionResultId, table.targetId),
+    uniqueIndex('agent_recommendations_agent_criterion_idx').on(table.agentId, table.criterionId),
+    index('agent_recommendations_agent_generated_idx').on(table.agentId, table.generatedAt),
+  ],
+);
+
+export const recommendationGenerationStates = pgTable(
+  'recommendation_generation_states',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    requestId: uuid('request_id').notNull(),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => voiceAgents.id, { onDelete: 'cascade' }),
+    criterionId: uuid('criterion_id')
+      .notNull()
+      .references(() => successCriteria.id, { onDelete: 'cascade' }),
+    status: varchar('status', { length: 24 }).default('queued').notNull(),
+    lastError: text('last_error'),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('recommendation_generation_states_request_idx').on(table.requestId),
+    uniqueIndex('recommendation_generation_states_agent_criterion_idx').on(
+      table.agentId,
+      table.criterionId,
+    ),
   ],
 );
 
@@ -631,36 +552,20 @@ export const marketplaceInstallations = pgTable(
 
 export const voiceAgentsRelations = relations(voiceAgents, ({ one, many }) => ({
   location: one(locations, { fields: [voiceAgents.locationId], references: [locations.id] }),
-  configSnapshots: many(agentConfigSnapshots),
+  configuration: one(voiceAgentConfigurations),
   criteria: many(successCriteria),
-  criterionSets: many(criterionSets),
+  recommendations: many(agentRecommendations),
   calls: many(voiceCalls),
 }));
 export const voiceCallsRelations = relations(voiceCalls, ({ one, many }) => ({
   agent: one(voiceAgents, { fields: [voiceCalls.agentId], references: [voiceAgents.id] }),
   location: one(locations, { fields: [voiceCalls.locationId], references: [locations.id] }),
-  configSnapshot: one(agentConfigSnapshots, {
-    fields: [voiceCalls.agentConfigSnapshotId],
-    references: [agentConfigSnapshots.id],
-  }),
   turns: many(callTurns),
   actionEvents: many(callActionEvents),
   analyses: many(callAnalysisRuns),
 }));
 export const callAnalysisRunsRelations = relations(callAnalysisRuns, ({ one, many }) => ({
   call: one(voiceCalls, { fields: [callAnalysisRuns.callId], references: [voiceCalls.id] }),
-  configSnapshot: one(agentConfigSnapshots, {
-    fields: [callAnalysisRuns.configSnapshotId],
-    references: [agentConfigSnapshots.id],
-  }),
-  criterionSet: one(criterionSets, {
-    fields: [callAnalysisRuns.criterionSetId],
-    references: [criterionSets.id],
-  }),
-  analysisRelease: one(analysisReleases, {
-    fields: [callAnalysisRuns.analysisReleaseId],
-    references: [analysisReleases.id],
-  }),
   criterionResults: many(criterionResults),
 }));
 export const companiesRelations = relations(companies, ({ many }) => ({

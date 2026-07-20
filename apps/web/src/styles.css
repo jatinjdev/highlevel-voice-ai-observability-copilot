@@ -433,14 +433,15 @@ p {
 }
 
 .criterion-form {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(110px, 0.35fr) 1fr auto;
   gap: 8px;
   padding: 9px 12px;
   border-bottom: 1px solid var(--line);
 }
+.criterion-form input,
 .criterion-form textarea {
   min-height: 38px;
-  flex: 1;
   resize: none;
   padding: 9px 10px;
   border: 1px solid var(--line-strong);
@@ -456,8 +457,8 @@ p {
 }
 .criteria-list article {
   position: relative;
-  min-height: 82px;
-  padding: 12px 70px 26px 12px;
+  min-height: 104px;
+  padding: 12px 12px 42px;
   border: 1px solid var(--line);
   border-radius: 8px;
   cursor: pointer;
@@ -468,6 +469,8 @@ p {
   background: #faf9ff;
 }
 .criteria-list strong {
+  display: block;
+  padding-right: 48px;
   font-size: 11px;
 }
 .criteria-list p {
@@ -476,11 +479,14 @@ p {
   font-size: 9px;
   line-height: 1.45;
 }
-.delete-button {
+.criterion-actions {
   position: absolute;
   top: 7px;
   right: 8px;
   display: none;
+  gap: 2px;
+}
+.criterion-actions button {
   width: 22px;
   height: 22px;
   padding: 0;
@@ -491,8 +497,8 @@ p {
   cursor: pointer;
   font-size: 18px;
 }
-.criteria-list article:hover .delete-button {
-  display: block;
+.criteria-list article:hover .criterion-actions {
+  display: flex;
 }
 .criterion-failures {
   position: absolute;
@@ -501,6 +507,47 @@ p {
   color: var(--red);
   font-size: 9px;
   font-weight: 700;
+}
+.generate-recommendation {
+  position: absolute;
+  bottom: 7px;
+  left: 10px;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--primary);
+  background: var(--primary-soft);
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 700;
+}
+.generate-recommendation:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.criterion-edit {
+  width: 100%;
+  min-height: 54px;
+  margin-top: 7px;
+  padding: 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  resize: vertical;
+  font-size: 9px;
+}
+.criterion-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 5px;
+}
+.criterion-edit-actions button {
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: white;
+  cursor: pointer;
+  font-size: 8px;
 }
 
 .agent-recommendations {
@@ -534,28 +581,38 @@ p {
   justify-content: space-between;
   gap: 8px;
 }
+.delete-recommendation {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  color: var(--subtle);
+  background: transparent;
+  cursor: pointer;
+  font-size: 17px;
+}
 .recommendation-meta > span {
   padding: 3px 8px;
   border-radius: 999px;
   color: var(--primary);
   background: var(--primary-soft);
-  font-size: 7px;
+  font-size: 9px;
   font-weight: 800;
   text-transform: uppercase;
 }
 .recommendation-meta small {
   color: var(--subtle);
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 600;
 }
 .recommendation-card h3 {
   margin-top: 7px;
-  font-size: 11px;
+  font-size: 13px;
 }
 .recommendation-card > p {
   margin-top: 4px;
   color: var(--muted);
-  font-size: 8px;
+  font-size: 10px;
   line-height: 1.4;
 }
 .copy-block {
@@ -574,7 +631,7 @@ p {
 .copy-block span {
   display: block;
   color: var(--primary);
-  font-size: 7px;
+  font-size: 8px;
   font-weight: 800;
   text-transform: uppercase;
 }
@@ -583,7 +640,7 @@ p {
   margin-top: 4px;
   color: #303a52;
   font-family: inherit;
-  font-size: 8px;
+  font-size: 10px;
   line-height: 1.4;
   white-space: pre-wrap;
 }
@@ -625,7 +682,7 @@ p {
 }
 .call-workspace {
   display: grid;
-  height: calc(63vh - 76px);
+  height: calc(100vh - 138px);
   min-height: 310px;
   grid-template-columns: minmax(0, 1.65fr) minmax(300px, 0.7fr);
   gap: 14px;
@@ -662,6 +719,10 @@ p {
   color: #48617f;
   background: #dce9fb;
 }
+.speaker-avatar[data-speaker='action'] {
+  color: #6d4b00;
+  background: #fff0bd;
+}
 .transcript strong {
   font-size: 10px;
 }
@@ -670,6 +731,21 @@ p {
   color: #354258;
   font-size: 11px;
   line-height: 1.55;
+}
+.call-actions {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.call-actions > h3 {
+  margin: 0 11px 4px;
+  color: var(--subtle);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.call-action-row p {
+  text-transform: capitalize;
 }
 .issue-list {
   display: grid;
@@ -704,12 +780,6 @@ p {
   font-size: 8px;
   font-weight: 750;
 }
-.call-recommendations {
-  height: calc(28vh - 18px);
-  min-height: 160px;
-  margin-top: 14px;
-}
-
 @media (max-width: 900px) {
   .page-shell {
     width: calc(100% - 24px);
@@ -730,9 +800,11 @@ p {
   .issue-panel {
     height: 420px;
   }
-  .agent-recommendations,
-  .call-recommendations {
+  .agent-recommendations {
     height: 280px;
+  }
+  .criterion-form {
+    grid-template-columns: 1fr;
   }
   .summary-strip-three {
     grid-template-columns: 1fr;

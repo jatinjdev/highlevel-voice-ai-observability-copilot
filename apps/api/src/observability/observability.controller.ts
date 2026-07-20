@@ -9,13 +9,15 @@ import type {
 import {
   agentReanalysisRequestSchema,
   agentCallPageQuerySchema,
-  successCriterionDraftRequestSchema,
+  createSuccessCriterionRequestSchema,
+  updateSuccessCriterionRequestSchema,
 } from '@copilot/contracts';
-import { Body, Controller, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
 
 import { LocationContext } from '../session/location-context';
 import { LocationContextGuard } from '../session/location-context.guard';
 import { ObservabilityService } from './observability.service';
+import { RecommendationCommandsService } from './recommendation-commands.service';
 import { SuccessCriteriaService } from './success-criteria.service';
 
 @Controller('observability')
@@ -24,6 +26,7 @@ export class ObservabilityController {
   constructor(
     private readonly observabilityService: ObservabilityService,
     private readonly successCriteriaService: SuccessCriteriaService,
+    private readonly recommendationCommands: RecommendationCommandsService,
   ) {}
 
   @Get()
@@ -86,47 +89,51 @@ export class ObservabilityController {
     return this.observabilityService.reanalysisStatus(locationId, agentId, batchId);
   }
 
-  @Post('agents/:agentId/success-criteria/drafts')
-  createSuccessCriterionDraft(
+  @Post('agents/:agentId/success-criteria')
+  createSuccessCriterion(
     @LocationContext() locationId: string,
     @Param('agentId') agentId: string,
     @Body() body: unknown,
   ) {
-    const { naturalLanguageRule } = successCriterionDraftRequestSchema.parse(body);
-    return this.successCriteriaService.createDraft(locationId, agentId, naturalLanguageRule);
+    const { name, description } = createSuccessCriterionRequestSchema.parse(body);
+    return this.successCriteriaService.create(locationId, agentId, name, description);
   }
 
   @Put('agents/:agentId/success-criteria/:criterionId')
-  updateSuccessCriterionDraft(
+  updateSuccessCriterion(
     @LocationContext() locationId: string,
     @Param('agentId') agentId: string,
     @Param('criterionId') criterionId: string,
     @Body() body: unknown,
   ) {
-    const { naturalLanguageRule } = successCriterionDraftRequestSchema.parse(body);
-    return this.successCriteriaService.updateDraft(
-      locationId,
-      agentId,
-      criterionId,
-      naturalLanguageRule,
-    );
+    const { description } = updateSuccessCriterionRequestSchema.parse(body);
+    return this.successCriteriaService.update(locationId, agentId, criterionId, description);
   }
 
-  @Post('agents/:agentId/success-criteria/:criterionId/activate')
-  activateSuccessCriterion(
+  @Delete('agents/:agentId/success-criteria/:criterionId')
+  removeSuccessCriterion(
     @LocationContext() locationId: string,
     @Param('agentId') agentId: string,
     @Param('criterionId') criterionId: string,
   ) {
-    return this.successCriteriaService.activate(locationId, agentId, criterionId);
+    return this.successCriteriaService.remove(locationId, agentId, criterionId);
   }
 
-  @Post('agents/:agentId/success-criteria/:criterionId/retire')
-  retireSuccessCriterion(
+  @Post('agents/:agentId/success-criteria/:criterionId/recommendation')
+  generateRecommendation(
     @LocationContext() locationId: string,
     @Param('agentId') agentId: string,
     @Param('criterionId') criterionId: string,
   ) {
-    return this.successCriteriaService.retire(locationId, agentId, criterionId);
+    return this.recommendationCommands.generate(locationId, agentId, criterionId);
+  }
+
+  @Delete('agents/:agentId/success-criteria/:criterionId/recommendation')
+  removeRecommendation(
+    @LocationContext() locationId: string,
+    @Param('agentId') agentId: string,
+    @Param('criterionId') criterionId: string,
+  ) {
+    return this.recommendationCommands.remove(locationId, agentId, criterionId);
   }
 }

@@ -8,8 +8,8 @@ import {
   observabilityDashboardSchema,
   pipelineSummarySchema,
   pipelineSyncResponseSchema,
-  successCriterionActivationResponseSchema,
-  successCriterionDraftResponseSchema,
+  recommendationGenerationResponseSchema,
+  successCriterionMutationResponseSchema,
   type HealthResponse,
   type AgentAnalysisDetail,
   type AgentCallPage,
@@ -139,38 +139,64 @@ export async function reanalyzeAgent(
   return agentReanalysisResponseSchema.parse(await response.json());
 }
 
-export async function createSuccessCriterionDraft(agentId: string, naturalLanguageRule: string) {
+export async function createSuccessCriterion(agentId: string, name: string, description: string) {
   const response = await authenticatedFetch(
-    `/observability/agents/${encodeURIComponent(agentId)}/success-criteria/drafts`,
+    `/observability/agents/${encodeURIComponent(agentId)}/success-criteria`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ naturalLanguageRule }),
+      body: JSON.stringify({ name, description }),
     },
   );
   if (!response.ok)
-    throw new Error(`Success Criterion draft failed with status ${response.status}.`);
-  return successCriterionDraftResponseSchema.parse(await response.json());
+    throw new Error(`Success Criterion creation failed with status ${response.status}.`);
+  return successCriterionMutationResponseSchema.parse(await response.json());
 }
 
-export async function activateSuccessCriterion(agentId: string, criterionId: string) {
+export async function updateSuccessCriterion(
+  agentId: string,
+  criterionId: string,
+  description: string,
+) {
   const response = await authenticatedFetch(
-    `/observability/agents/${encodeURIComponent(agentId)}/success-criteria/${encodeURIComponent(criterionId)}/activate`,
+    `/observability/agents/${encodeURIComponent(agentId)}/success-criteria/${encodeURIComponent(criterionId)}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description }),
+    },
+  );
+  if (!response.ok)
+    throw new Error(`Success Criterion update failed with status ${response.status}.`);
+  return successCriterionMutationResponseSchema.parse(await response.json());
+}
+
+export async function deleteSuccessCriterion(agentId: string, criterionId: string): Promise<void> {
+  const response = await authenticatedFetch(
+    `/observability/agents/${encodeURIComponent(agentId)}/success-criteria/${encodeURIComponent(criterionId)}`,
+    { method: 'DELETE' },
+  );
+  if (!response.ok)
+    throw new Error(`Success Criterion deletion failed with status ${response.status}.`);
+}
+
+export async function generateRecommendation(agentId: string, criterionId: string) {
+  const response = await authenticatedFetch(
+    `/observability/agents/${encodeURIComponent(agentId)}/success-criteria/${encodeURIComponent(criterionId)}/recommendation`,
     { method: 'POST' },
   );
   if (!response.ok)
-    throw new Error(`Success Criterion activation failed with status ${response.status}.`);
-  return successCriterionActivationResponseSchema.parse(await response.json());
+    throw new Error(`Recommendation generation failed with status ${response.status}.`);
+  return recommendationGenerationResponseSchema.parse(await response.json());
 }
 
-export async function retireSuccessCriterion(agentId: string, criterionId: string) {
+export async function deleteRecommendation(agentId: string, criterionId: string): Promise<void> {
   const response = await authenticatedFetch(
-    `/observability/agents/${encodeURIComponent(agentId)}/success-criteria/${encodeURIComponent(criterionId)}/retire`,
-    { method: 'POST' },
+    `/observability/agents/${encodeURIComponent(agentId)}/success-criteria/${encodeURIComponent(criterionId)}/recommendation`,
+    { method: 'DELETE' },
   );
   if (!response.ok)
-    throw new Error(`Success Criterion retirement failed with status ${response.status}.`);
-  return successCriterionActivationResponseSchema.parse(await response.json());
+    throw new Error(`Recommendation deletion failed with status ${response.status}.`);
 }
 
 export async function getPipelineSummary(): Promise<PipelineSummary> {

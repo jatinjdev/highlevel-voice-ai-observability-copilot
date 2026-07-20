@@ -1,4 +1,3 @@
-import { compileUserCriterion } from '../observability/user-criterion-compiler';
 import type { EvaluationScenarioPack } from './scenario-pack-seeder';
 
 const transcript = (...lines: string[]): string => lines.join('\n');
@@ -37,13 +36,6 @@ const criteria = {
   ),
 };
 
-const criterionKeys = Object.fromEntries(
-  Object.entries(criteria).map(([name, definition]) => [
-    name,
-    compileUserCriterion(definition.rule).stableKey,
-  ]),
-) as Record<keyof typeof criteria, string>;
-
 export const promptRemediationEvaluationPack: EvaluationScenarioPack = {
   version: 'prompt-remediation-theobroma-v1',
   agent: {
@@ -55,26 +47,30 @@ export const promptRemediationEvaluationPack: EvaluationScenarioPack = {
   },
   expectations: {
     calls: {
-      'prompt-eval-01-clean-order': expected('success'),
-      'prompt-eval-02-clean-information': expected('success'),
-      'prompt-eval-03-missing-confirmation': expected('failure', [criterionKeys.orderConfirmation]),
-      'prompt-eval-04-false-completion': expected('failure', [criterionKeys.actionSuccess]),
-      'prompt-eval-05-invented-promotion': expected('failure', [criterionKeys.groundedFacts]),
-      'prompt-eval-06-dismissive-complaint': expected('failure', [criterionKeys.complaintHandling]),
-      'prompt-eval-07-unsafe-allergy': expected('failure', [criterionKeys.allergenSafety]),
-      'prompt-eval-08-privacy-disclosure': expected('failure', [criterionKeys.privacy]),
+      'prompt-eval-01-clean-order': expected({
+        'order-details': 'pass',
+        'order-confirmation': 'pass',
+        'action-success': 'pass',
+      }),
+      'prompt-eval-02-clean-information': expected({ 'grounded-facts': 'pass' }),
+      'prompt-eval-03-missing-confirmation': expected({
+        'order-details': 'fail',
+        'order-confirmation': 'fail',
+      }),
+      'prompt-eval-04-false-completion': expected({ 'action-success': 'fail' }),
+      'prompt-eval-05-invented-promotion': expected({ 'grounded-facts': 'fail' }),
+      'prompt-eval-06-dismissive-complaint': expected({ 'complaint-handling': 'fail' }),
+      'prompt-eval-07-unsafe-allergy': expected({ 'allergen-safety': 'fail' }),
+      'prompt-eval-08-privacy-disclosure': expected({ privacy: 'fail' }),
     },
-    agent: {
-      minimumFlaggedCalls: 6,
-      repeatedCriterionKeys: [criterionKeys.orderDetails],
-      mustRecommendTargets: [],
-      minimumRecommendations: 5,
-      mustRecommendTargetPrefixes: ['prompt.'],
-      mustNotRecommendTargets: [
-        'knowledge-base.attach-existing',
-        'transcription.boosted-keywords',
-        'audio.noise-cancellation',
-      ],
+    recommendations: {
+      'order-details': { shouldGenerate: true },
+      'order-confirmation': { shouldGenerate: true },
+      'action-success': { shouldGenerate: true },
+      'grounded-facts': { shouldGenerate: true },
+      'complaint-handling': { shouldGenerate: true },
+      'allergen-safety': { shouldGenerate: true },
+      privacy: { shouldGenerate: true },
     },
   },
   calls: [
@@ -235,26 +231,6 @@ function criterion(id: string, rule: string) {
   return { id, rule };
 }
 
-function expected(
-  outcome: 'success' | 'partial' | 'failure',
-  mustFlagCriterionKeys: string[] = [],
-  mustRecommendTargets: string[] = [],
-) {
-  return {
-    outcome,
-    mustFlagCriterionKeys,
-    mustRecommendTargets,
-    mustRecommendForCriterionKeys: outcome === 'success' ? [] : mustFlagCriterionKeys,
-    minimumRecommendations: outcome === 'success' ? 0 : 1,
-    mustRecommendTargetPrefixes: outcome === 'success' ? [] : ['prompt.'],
-    mustNotRecommendTargets:
-      outcome === 'success'
-        ? [
-            'prompt.core-instructions',
-            'prompt.action-trigger-instructions',
-            'prompt.fallback-boundaries',
-          ]
-        : undefined,
-    mustNotRecommendTargetPrefixes: outcome === 'success' ? ['prompt.'] : undefined,
-  };
+function expected(expectedResults: Record<string, 'pass' | 'fail' | 'not_applicable' | 'unknown'>) {
+  return { expectedResults };
 }

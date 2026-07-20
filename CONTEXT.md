@@ -1,68 +1,63 @@
 # Voice AI Observability
 
-This context describes how completed Voice Agent calls are assessed, aggregated, and
-turned into concrete operational interventions and manual HighLevel guidance.
+This context defines the product language for evaluating completed Voice Agent calls and turning
+repeated failures into optional prompt guidance.
 
 ## Language
 
 **Voice Agent**:
-A HighLevel agent whose completed calls share configuration and Success Criteria.
+A HighLevel Voice AI agent. Its calls share one current prompt and an agent-owned Success Criteria
+checklist.
 _Avoid_: Bot, assistant, agent record
 
-**Agent Configuration Snapshot**:
-An immutable statement of what was known, unknown, or known empty about a Voice Agent
-when a Call was evaluated.
-_Avoid_: Current settings, live configuration
+**Current Agent Configuration**:
+The latest Voice Agent prompt and configuration returned by HighLevel. It is used only when a user
+requests prompt guidance; it is never treated as the configuration that handled a historical Call.
+_Avoid_: Configuration snapshot, prompt version, historical configuration
 
 **Success Criterion**:
-An agent-owned rule describing an observable expectation for a Call. It has immutable
-versions and must be active before it affects evaluation.
-_Avoid_: Metric, KPI, prompt line
+A named checklist item owned by one Voice Agent. Its immutable, unique name is the aggregation key;
+its editable description is the complete instruction evaluated by the model.
+_Avoid_: Weighted metric, KPI score, criterion version, criterion set
+
+**Call Evidence**:
+The transcript turns and executed Call Action events observed for one completed Call. Call Analysis
+may use nothing else.
+_Avoid_: Current agent prompt, hidden configuration, inferred action execution
 
 **Criterion Result**:
-The categorical, evidence-backed outcome of applying one Success-Criterion version to one
-Call Analysis.
-_Avoid_: Score, metric value, grade
+The categorical result of applying one Success Criterion to one Call: `pass`, `fail`,
+`not_applicable`, or `unknown`. A failure must cite Call Evidence.
+_Avoid_: Score, grade, weighted result
 
 **Call Analysis**:
-An immutable evaluation run for one Call using one Agent Configuration Snapshot and one
-Criterion Set.
-_Avoid_: Evaluation Result, latest analysis blob
+One checklist evaluation of a completed Call against the Voice Agent's current Success Criteria.
+It does not generate recommendations.
+_Avoid_: Prompt review, root-cause analysis, call recommendation
 
 **Agent Analysis**:
-A reproducible aggregation of current Call Analyses under one Voice Agent for a defined
-cohort and cutoff.
-_Avoid_: Dashboard calculation, agent score
+A read model that groups the current Criterion Results from multiple Calls by Success Criterion.
+It is not a separate model judgment and has no overall score.
+_Avoid_: Fleet score, hidden aggregate evaluation
 
-**Check**:
-The UI presentation of a Criterion Result in the call checklist.
-_Avoid_: Metric, KPI, scored criterion
-
-**Finding**:
-An evidence-backed explanation of what happened in a Call and why it matters.
-_Avoid_: Recommendation, flag
-
-**Evidence Citation**:
-A validated quote anchored to an immutable Call turn.
-_Avoid_: Transcript timestamp, free-form evidence JSON
-
-**Agent Insight**:
-An evidence-backed single observation or repeated pattern produced by an Agent Analysis
-and linked to its contributing calls.
-_Avoid_: Trend without cohort, dashboard card
-
-**Recommendation Target**:
-A real HighLevel setting from the versioned capability catalogue that may be suggested as
-a manual change when its evidence policy is satisfied.
-_Avoid_: Invented setting, API field
-
-**Recommendation**:
-Evidence-backed advisory guidance for manually changing one Recommendation Target in
-HighLevel. It never applies the change.
-_Avoid_: Automatic fix, API mutation, generic advice
+**Prompt Recommendation**:
+User-requested guidance for one failed Success Criterion. Generation samples up to the 20 most
+recent failed Calls, compares those failures with the Current Agent Configuration, and returns a
+paste-ready prompt addition only when the prompt does not already address the concern.
+_Avoid_: Automatic recommendation, call-level recommendation, applied fix, recommendation history
 
 **Call Action**:
-A HighLevel capability configured on a Voice Agent, such as transfer, appointment booking,
-workflow, SMS, contact update, or a custom/MCP action. It may be the target of a
-Recommendation, but is not itself an observability task or queue item.
-_Avoid_: Follow-up task, recommendation status
+A HighLevel capability executed during a Call, such as transfer, appointment booking, workflow,
+SMS, contact update, or a custom/MCP action. When HighLevel supplies an execution event, it becomes
+Call Evidence; its absence is not proof that an action failed.
+_Avoid_: User Action, follow-up task, queue item
+
+## Invariants
+
+- Call Analysis receives Call Evidence and Success Criterion descriptions only.
+- Success Criterion names are unique within a Voice Agent and are not editable.
+- Recommendations exist only at Voice Agent level and one may exist per Success Criterion.
+- Recommendations are generated or regenerated only by an explicit user request.
+- Deleting a recommendation deletes its generation state; no history is retained.
+- A prompt change invalidates every stored recommendation for that Voice Agent.
+- A stale model response cannot replace guidance generated for a newer request or prompt.

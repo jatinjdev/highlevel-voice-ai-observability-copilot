@@ -10,8 +10,10 @@ import { useRoute, useRouter } from 'vue-router';
 
 import RecommendationPanel from '../components/RecommendationPanel.vue';
 import {
-  activateSuccessCriterion,
-  createSuccessCriterionDraft,
+  createSuccessCriterion,
+  deleteRecommendation,
+  deleteSuccessCriterion,
+  generateRecommendation,
   getAgentAnalysis,
   getAgentCalls,
   getCallAnalysis,
@@ -19,7 +21,7 @@ import {
   initializeMarketplaceSession,
   reanalyzeAgent,
   reanalyzeCall,
-  retireSuccessCriterion,
+  updateSuccessCriterion,
 } from '../lib/api';
 
 const route = useRoute();
@@ -32,10 +34,13 @@ const error = ref('');
 const notice = ref('');
 const search = ref('');
 const callSearch = ref('');
-const selectedCriterionVersionId = ref<string | null>(null);
-const selectedRecommendationId = ref<string | null>(null);
-const newCriterion = ref('');
+const selectedCriterionId = ref<string | null>(null);
+const newCriterionName = ref('');
+const newCriterionDescription = ref('');
 const addingCriterion = ref(false);
+const editingCriterionId = ref<string | null>(null);
+const editingCriterionDescription = ref('');
+const generatingCriterionId = ref<string | null>(null);
 const loadingMoreCalls = ref(false);
 const reanalysisMenuOpen = ref(false);
 
@@ -47,10 +52,7 @@ const filteredAgents = computed(() => {
 const visibleCalls = computed(() => {
   const term = callSearch.value.trim().toLowerCase();
   return (agent.value?.calls ?? []).filter((item) => {
-    if (
-      selectedCriterionVersionId.value &&
-      !item.failedCriterionVersionIds.includes(selectedCriterionVersionId.value)
-    )
+    if (selectedCriterionId.value && !item.failedCriterionIds.includes(selectedCriterionId.value))
       return false;
     return (
       !term ||
@@ -63,14 +65,16 @@ const failedResults = computed(
   () => call.value?.criterionResults.filter(({ result }) => result === 'fail') ?? [],
 );
 const highlightedTurnIds = computed(() => {
-  const selectedRecommendation = call.value?.recommendations.find(
-    ({ id }) => id === selectedRecommendationId.value,
-  );
-  if (selectedRecommendation) return new Set(selectedRecommendation.evidenceTurnIds);
   const result = call.value?.criterionResults.find(
-    ({ criterionVersionId }) => criterionVersionId === selectedCriterionVersionId.value,
+    ({ criterionId }) => criterionId === selectedCriterionId.value,
   );
   return new Set(result?.evidence.map(({ turnId }) => turnId) ?? []);
+});
+const highlightedActionIds = computed(() => {
+  const result = call.value?.criterionResults.find(
+    ({ criterionId }) => criterionId === selectedCriterionId.value,
+  );
+  return new Set(result?.actionEvidence.map(({ id }) => id) ?? []);
 });
 
 onMounted(loadRoute);
@@ -112,20 +116,25 @@ async function loadRoute(): Promise<void> {
 async function navigate(query: Record<string, string>): Promise<void> {
   const locationId = stringQuery(route.query.locationId);
   await router.push({ path: '/', query: { ...(locationId ? { locationId } : {}), ...query } });
-  selectedCriterionVersionId.value = null;
-  selectedRecommendationId.value = null;
+  selectedCriterionId.value = null;
 }
 
 async function addCriterion(): Promise<void> {
-  if (!agent.value || newCriterion.value.trim().length < 10) return;
+  if (
+    !agent.value ||
+    newCriterionName.value.trim().length < 2 ||
+    newCriterionDescription.value.trim().length < 10
+  )
+    return;
   addingCriterion.value = true;
   try {
-    const draft = await createSuccessCriterionDraft(
+    await createSuccessCriterion(
       agent.value.agent.id,
-      newCriterion.value.trim(),
+      newCriterionName.value.trim(),
+      newCriterionDescription.value.trim(),
     );
-    await activateSuccessCriterion(agent.value.agent.id, draft.criterion.id);
-    newCriterion.value = '';
+    newCriterionName.value = '';
+    newCriterionDescription.value = '';
     await loadRoute();
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : 'The criterion could not be added.';
@@ -149,8 +158,76 @@ async function loadMoreCalls(): Promise<void> {
 
 async function removeCriterion(criterionId: string): Promise<void> {
   if (!agent.value) return;
-  await retireSuccessCriterion(agent.value.agent.id, criterionId);
-  selectedCriterionVersionId.value = null;
+  await deleteSuccessCriterion(agent.value.agent.id, criterionId);
+  selectedCriterionId.value = null;
+  await loadRoute();
+}
+
+function beginCriterionEdit(criterionId: string, description: string): void {
+  editingCriterionId.value = criterionId;
+  editingCriterionDescription.value = description;
+}
+
+async function saveCriterionEdit(): Promise<void> {
+  if (
+    !agent.value ||
+    !editingCriterionId.value ||
+    editingCriterionDescription.value.trim().length < 10
+  )
+    return;
+  await updateSuccessCriterion(
+    agent.value.agent.id,
+    editingCriterionId.value,
+    editingCriterionDescription.value.trim(),
+  );
+  editingCriterionId.value = null;
+  editingCriterionDescription.value = '';
+  await loadRoute();
+}
+
+async function requestRecommendation(criterionId: string): Promise<void> {
+  if (!agent.value) return;
+  const agentId = agent.value.agent.id;
+  generatingCriterionId.value = criterionId;
+  try {
+    await generateRecommendation(agentId, criterionId);
+    notice.value = 'Recommendation queued';
+    await loadRoute();
+    void pollRecommendation(agentId, criterionId);
+  } finally {
+    generatingCriterionId.value = null;
+  }
+}
+
+async function pollRecommendation(agentId: string, criterionId: string): Promise<void> {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    await delay(1_500);
+    if (agent.value?.agent.id !== agentId) return;
+    let current: AgentAnalysisDetail;
+    try {
+      current = await getAgentAnalysis(agentId);
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : 'Prompt guidance status was lost.';
+      return;
+    }
+    if (agent.value?.agent.id !== agentId) return;
+    agent.value = current;
+    const state = current.recommendationStatuses.find(
+      (status) => status.criterionId === criterionId,
+    );
+    if (!state || state.status === 'queued' || state.status === 'processing') continue;
+    if (state.status === 'completed') notice.value = 'Prompt guidance ready';
+    else if (state.status === 'not_needed')
+      notice.value = 'The current prompt already covers this criterion';
+    else error.value = state.lastError ?? 'Prompt guidance could not be generated.';
+    return;
+  }
+  notice.value = 'Prompt guidance is still processing';
+}
+
+async function removeRecommendation(recommendation: Recommendation): Promise<void> {
+  if (!agent.value) return;
+  await deleteRecommendation(agent.value.agent.id, recommendation.criterionId);
   await loadRoute();
 }
 
@@ -170,29 +247,52 @@ async function runAgentAnalysis(window: '24h' | '7d'): Promise<void> {
 }
 
 async function copyRecommendation(recommendation: Recommendation): Promise<void> {
-  await navigator.clipboard.writeText(recommendation.proposedChange);
+  await navigator.clipboard.writeText(recommendation.promptAddition);
   notice.value = 'Prompt change copied';
 }
 
-async function selectCallEvidence(recommendation: Recommendation): Promise<void> {
-  selectedRecommendationId.value = recommendation.id;
-  selectedCriterionVersionId.value = recommendation.criterionVersionId;
-  await scrollToEvidence(recommendation.evidenceTurnIds[0]);
+async function selectCriterion(
+  criterionId: string,
+  turnId?: string,
+  actionEventId?: string,
+): Promise<void> {
+  const nextCriterionId = selectedCriterionId.value === criterionId ? null : criterionId;
+  selectedCriterionId.value = nextCriterionId;
+  if (nextCriterionId) await scrollToEvidence(turnId, actionEventId);
 }
 
-async function selectCriterion(criterionVersionId: string, turnId?: string): Promise<void> {
-  selectedRecommendationId.value = null;
-  selectedCriterionVersionId.value =
-    selectedCriterionVersionId.value === criterionVersionId ? null : criterionVersionId;
-  await scrollToEvidence(turnId);
+function recommendationStatus(criterionId: string): string | null {
+  return (
+    agent.value?.recommendationStatuses.find((status) => status.criterionId === criterionId)
+      ?.status ?? null
+  );
 }
 
-async function scrollToEvidence(turnId?: string): Promise<void> {
-  if (!turnId) return;
+function hasRecommendation(criterionId: string): boolean {
+  return (
+    agent.value?.recommendations.some(
+      (recommendation) => recommendation.criterionId === criterionId,
+    ) ?? false
+  );
+}
+
+function recommendationButtonLabel(criterionId: string): string {
+  const status = recommendationStatus(criterionId);
+  if (status === 'queued' || status === 'processing') return 'Checking current prompt…';
+  if (status === 'not_needed') return 'Prompt covered · Check again';
+  if (status === 'failed') return 'Try prompt guidance again';
+  return hasRecommendation(criterionId) ? 'Regenerate prompt guidance' : 'Generate prompt guidance';
+}
+
+async function scrollToEvidence(turnId?: string, actionEventId?: string): Promise<void> {
+  const selector = turnId
+    ? `[data-turn-id="${turnId}"]`
+    : actionEventId
+      ? `[data-action-id="${actionEventId}"]`
+      : null;
+  if (!selector) return;
   await nextTick();
-  document
-    .querySelector(`[data-turn-id="${turnId}"]`)
-    ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  document.querySelector(selector)?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
 }
 
 function stringQuery(value: unknown): string | null {
@@ -211,6 +311,10 @@ function formatDate(value: string): string {
     hour: 'numeric',
     minute: '2-digit',
   }).format(new Date(value));
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 </script>
 
@@ -300,7 +404,7 @@ function formatDate(value: string): string {
             <header class="compact-panel-header">
               <div>
                 <h2>Call log</h2>
-                <p v-if="selectedCriterionVersionId">Filtered by selected criterion</p>
+                <p v-if="selectedCriterionId">Filtered by selected criterion</p>
               </div>
               <label class="mini-search"
                 ><input v-model="callSearch" placeholder="Search calls"
@@ -353,12 +457,17 @@ function formatDate(value: string): string {
               </div>
             </header>
             <form class="criterion-form" @submit.prevent="addCriterion">
+              <input v-model="newCriterionName" placeholder="Criterion name" maxlength="96" />
               <textarea
-                v-model="newCriterion"
-                placeholder="Add a success criterion in plain language"
+                v-model="newCriterionDescription"
+                placeholder="Describe exactly what should happen in a call"
               /><button
                 class="primary-button"
-                :disabled="addingCriterion || newCriterion.trim().length < 10"
+                :disabled="
+                  addingCriterion ||
+                  newCriterionName.trim().length < 2 ||
+                  newCriterionDescription.trim().length < 10
+                "
               >
                 Add
               </button>
@@ -367,32 +476,62 @@ function formatDate(value: string): string {
               <article
                 v-for="criterion in agent.successCriteria"
                 :key="criterion.id"
-                :data-selected="selectedCriterionVersionId === criterion.versionId"
-                @click="selectCriterion(criterion.versionId)"
+                :data-criterion-id="criterion.id"
+                :data-selected="selectedCriterionId === criterion.id"
+                @click="selectCriterion(criterion.id)"
               >
-                <button
-                  class="delete-button"
-                  title="Delete criterion"
-                  @click.stop="removeCriterion(criterion.id)"
-                >
-                  ×
-                </button>
-                <strong>{{ criterion.title }}</strong>
-                <p>{{ criterion.naturalLanguageRule }}</p>
+                <div class="criterion-actions">
+                  <button
+                    title="Edit criterion"
+                    @click.stop="beginCriterionEdit(criterion.id, criterion.description)"
+                  >
+                    ✎
+                  </button>
+                  <button title="Delete criterion" @click.stop="removeCriterion(criterion.id)">
+                    ×
+                  </button>
+                </div>
+                <strong>{{ criterion.name }}</strong>
+                <template v-if="editingCriterionId === criterion.id">
+                  <textarea
+                    v-model="editingCriterionDescription"
+                    class="criterion-edit"
+                    @click.stop
+                  />
+                  <div class="criterion-edit-actions" @click.stop>
+                    <button @click="editingCriterionId = null">Cancel</button>
+                    <button
+                      :disabled="editingCriterionDescription.trim().length < 10"
+                      @click="saveCriterionEdit"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </template>
+                <p v-else>{{ criterion.description }}</p>
                 <span class="criterion-failures"
                   >{{ criterion.resultDistribution.fail }} failed</span
                 >
+                <button
+                  v-if="criterion.resultDistribution.fail > 0"
+                  class="generate-recommendation"
+                  :disabled="
+                    generatingCriterionId === criterion.id ||
+                    ['queued', 'processing'].includes(recommendationStatus(criterion.id) ?? '')
+                  "
+                  @click.stop="requestRecommendation(criterion.id)"
+                >
+                  {{ recommendationButtonLabel(criterion.id) }}
+                </button>
               </article>
             </div>
           </section>
         </div>
         <RecommendationPanel
           class="agent-recommendations"
-          scope="agent"
           :recommendations="agent.recommendations"
-          :analyzed-call-count="agent.summary.callsAnalyzed"
           @copy="copyRecommendation"
-          @select="() => undefined"
+          @remove="removeRecommendation"
         />
       </template>
 
@@ -416,7 +555,7 @@ function formatDate(value: string): string {
             <header class="compact-panel-header">
               <div>
                 <h2>Transcript</h2>
-                <p>Failed lines are highlighted when you select an issue</p>
+                <p>Failed transcript lines and executed actions highlight when selected</p>
               </div>
             </header>
             <div class="transcript internal-scroll">
@@ -434,6 +573,25 @@ function formatDate(value: string): string {
                   <p>{{ turn.text }}</p>
                 </div>
               </article>
+              <div v-if="call.call.actionEvents.length" class="call-actions">
+                <h3>Executed Call Actions</h3>
+                <article
+                  v-for="action in call.call.actionEvents"
+                  :key="action.id"
+                  class="call-action-row"
+                  :data-action-id="action.id"
+                  :data-highlighted="highlightedActionIds.has(action.id)"
+                >
+                  <span class="speaker-avatar" data-speaker="action">A</span>
+                  <div>
+                    <strong>{{ action.actionName || action.actionType || 'Call Action' }}</strong>
+                    <p>
+                      {{ action.actionType || 'Action' }} ·
+                      {{ action.outcome || 'Outcome unknown' }}
+                    </p>
+                  </div>
+                </article>
+              </div>
             </div>
           </section>
           <section class="data-panel issue-panel">
@@ -447,10 +605,16 @@ function formatDate(value: string): string {
               <button
                 v-for="result in failedResults"
                 :key="result.id"
-                :data-selected="selectedCriterionVersionId === result.criterionVersionId"
-                @click="selectCriterion(result.criterionVersionId, result.evidence[0]?.turnId)"
+                :data-selected="selectedCriterionId === result.criterionId"
+                @click="
+                  selectCriterion(
+                    result.criterionId,
+                    result.evidence[0]?.turnId,
+                    result.actionEvidence[0]?.id,
+                  )
+                "
               >
-                <strong>{{ result.title }}</strong
+                <strong>{{ result.criterionName }}</strong
                 ><span>{{ result.rationale }}</span
                 ><small>View evidence</small>
               </button>
@@ -458,14 +622,6 @@ function formatDate(value: string): string {
             <div v-else class="panel-empty">No criteria failed for this call.</div>
           </section>
         </div>
-        <RecommendationPanel
-          class="call-recommendations"
-          scope="call"
-          :recommendations="call.recommendations"
-          :selected-recommendation-id="selectedRecommendationId"
-          @copy="copyRecommendation"
-          @select="selectCallEvidence"
-        />
       </template>
     </div>
   </main>

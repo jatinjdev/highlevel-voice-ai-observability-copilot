@@ -13,15 +13,18 @@ be required before operating a large multi-customer fleet.
 - Transactional webhook inbox and outbox, leased publishing, SQS/DLQs, retry
   scheduling, and idempotent consumers.
 - One canonical ingestion path for live webhooks, historical sync, and reanalysis.
-- Versioned agent configuration snapshots, Success Criteria, Criterion Sets, and
-  immutable analysis-release metadata.
-- A deliberately small call-analysis loop: resolve active criteria, make one
-  structured model request, evaluate every criterion independently, validate cited
-  transcript turns, persist results, and produce one paste-ready prompt change for
-  each eligible failed criterion.
-- Call- and agent-level UI that traces recommendations back to criteria and calls.
+- Current Voice Agent configuration plus agent-owned Success Criteria with immutable,
+  unique names and editable descriptions.
+- A deliberately small call-analysis loop: load transcript/action evidence and current
+  criterion descriptions, make one structured model request, validate cited evidence,
+  and persist the categorical checklist results.
+- Manual agent-level Prompt Recommendation generation for one failed criterion at a
+  time, using at most the 20 most recent failures and the current prompt. Calls never
+  produce recommendations.
+- Call- and agent-level UI that traces failed criteria back to exact Call evidence.
 - Durable 24-hour and seven-day reanalysis batches.
-- Harper Valley and Theobroma scenario packs used for evaluation development.
+- One intentionally incomplete Theobroma prompt-remediation scenario pack that enters
+  through the production ingestion and analysis path.
 - Local PostgreSQL and LocalStack composition.
 - AWS CloudFormation for CloudFront/S3, CloudFront-restricted ALB ingress, an
   SSM-only EC2 host, private encrypted RDS, SQS/DLQs, ECR, Secrets Manager,
@@ -33,7 +36,11 @@ be required before operating a large multi-customer fleet.
   container image.
 
 Database migrations currently run through
-`apps/api/drizzle/0018_tough_smasher.sql`.
+`apps/api/drizzle/0019_simplified_analysis_model.sql`.
+Migration `0019` is the explicit one-time breaking reset authorized for this assessment refactor:
+it clears legacy analysis/checklist state so calls can be re-evaluated under the simpler model. It
+must not be treated as a reusable zero-downtime production upgrade; back up any environment whose
+legacy evaluation state must be retained before applying it.
 
 ## Known production increments
 
@@ -70,7 +77,8 @@ deployed until those commands complete against the account.
 - exchange signed Custom Page context without a development fallback;
 - observe a new call traverse inbox → SQS → ingestion → analysis → dashboard;
 - redeliver/requeue it and demonstrate idempotency;
-- show criterion result, exact transcript evidence, and paste-ready recommendation;
+- show criterion result and exact transcript evidence, then manually generate a
+  paste-ready agent recommendation for that criterion;
 - run historical sync twice and demonstrate convergence;
 - show queue/readiness alarms and the migration release boundary;
 - run repository checks from a clean checkout and manually review the submitted diff.

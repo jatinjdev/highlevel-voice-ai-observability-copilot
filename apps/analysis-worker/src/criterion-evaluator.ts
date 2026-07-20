@@ -3,10 +3,12 @@ import {
   type CallEvaluationInput,
   type CriterionEvaluation,
   type EvaluationCriterion,
+  type EvaluationActionEvent,
   type EvaluationTurn,
   type ModelCriterionEvaluation,
 } from './evaluation.types';
 import type { StructuredGenerationRequest, StructuredOutputLanguageModel } from './language-model';
+import { redactSensitiveText } from './prompt-safety';
 
 export interface CriterionEvaluator {
   readonly model: string | null;
@@ -21,10 +23,11 @@ export class DisabledCriterionEvaluator implements CriterionEvaluator {
   evaluate(input: CallEvaluationInput): Promise<CriterionEvaluation> {
     return Promise.resolve({
       criterionResults: input.criteria.map((criterion) => ({
-        criterionVersionId: criterion.criterionVersionId,
+        criterionId: criterion.criterionId,
         result: 'unknown',
         rationale: 'No language-model provider is configured.',
         evidenceTurnIds: [],
+        evidenceActionIds: [],
       })),
     });
   }
@@ -40,10 +43,16 @@ interface AliasedTurn {
   turn: EvaluationTurn;
 }
 
+interface AliasedAction {
+  alias: string;
+  action: EvaluationActionEvent;
+}
+
 export interface BuiltCriterionEvaluationRequest {
   request: StructuredGenerationRequest<typeof modelCriterionEvaluationSchema>;
   criteria: AliasedCriterion[];
   turns: AliasedTurn[];
+  actions: AliasedAction[];
 }
 
 export function buildCriterionEvaluationRequest(
@@ -54,16 +63,21 @@ export function buildCriterionEvaluationRequest(
     alias: alias('C', index),
     criterion,
   }));
+  const actions = input.actionEvents.map((action, index) => ({
+    alias: alias('A', index),
+    action,
+  }));
 
   return {
     request: {
       schema: modelCriterionEvaluationSchema,
       schemaName: 'voice_call_criterion_evaluation',
       systemPrompt: SYSTEM_PROMPT,
-      userPrompt: renderUserPrompt(input, turns, criteria),
+      userPrompt: renderUserPrompt(turns, actions, criteria),
     },
     criteria,
     turns,
+    actions,
   };
 }
 
@@ -94,26 +108,26 @@ Results:
 - not_applicable: this call did not exercise the criterion.
 - unknown: required evidence is absent or insufficient.
 
-A failure must cite the relevant transcript turn IDs. Customer context alone is not proof of agent behavior. Information volunteered by the customer counts as collected. Action events are authoritative when supplied. Missing action events do not prove that an action failed. Do not infer audio quality, latency, hidden configuration, intent, sentiment, root cause, or possible fixes.
+A failure must cite relevant transcript turns or supplied action events. Customer context alone is not proof of agent behavior. Information volunteered by the customer counts as collected. Action events are authoritative when supplied. Missing action events do not prove that an action failed. Do not infer audio quality, latency, hidden configuration, sentiment, root cause, or possible fixes.
 
 Return only criterion results matching the schema. Keep each rationale to one sentence.`;
 
 function renderUserPrompt(
-  input: CallEvaluationInput,
   turns: AliasedTurn[],
+  actions: AliasedAction[],
   criteria: AliasedCriterion[],
 ): string {
-  const events = input.actionEvents.length
-    ? input.actionEvents
+  const events = actions.length
+    ? actions
         .map(
-          (event, index) =>
-            `[${alias('E', index)}] action=${safe(event.actionName ?? 'unknown')}; type=${safe(event.actionType ?? 'unknown')}; outcome=${safe(event.outcome ?? 'unknown')}`,
+          ({ alias: id, action }) =>
+            `[${id}] action=${safe(action.actionName ?? 'unknown')}; type=${safe(action.actionType ?? 'unknown')}; outcome=${safe(action.outcome ?? 'unknown')}; result=${safe(redactSensitiveText(JSON.stringify(action.resultSummary)))}`,
         )
         .join('\n')
     : 'None supplied.';
 
   return `<transcript>
-${turns.map(({ alias: id, turn }) => `[${id}] ${speaker(turn.speaker)}: ${safe(redact(turn.text))}`).join('\n') || 'No transcript supplied.'}
+${turns.map(({ alias: id, turn }) => `[${id}] ${speaker(turn.speaker)}: ${safe(redactSensitiveText(turn.text))}`).join('\n') || 'No transcript supplied.'}
 </transcript>
 
 <action_events>
@@ -126,11 +140,7 @@ ${criteria.map(renderCriterion).join('\n\n')}
 }
 
 function renderCriterion({ alias: id, criterion }: AliasedCriterion): string {
-  return `[${id}] ${safe(criterion.title)}
-Rule: ${safe(criterion.naturalLanguageRule)}
-Applies when: ${safe(applicabilityText(criterion.applicabilityDefinition))}
-Judge: ${safe(criterion.evaluationInstructions)}
-Required evidence: ${criterion.requiredEvidence.map(safe).join('; ') || 'supplied call evidence'}`;
+  return `[${id}] ${safe(criterion.description)}`;
 }
 
 function normalize(
@@ -141,44 +151,55 @@ function normalize(
     output.criterionResults.map((result) => [result.criterionId, result]),
   );
   const turnByAlias = new Map(built.turns.map(({ alias: id, turn }) => [id, turn]));
+  const actionByAlias = new Map(built.actions.map(({ alias: id, action }) => [id, action]));
 
   return {
     criterionResults: built.criteria.map(({ alias: criterionAlias, criterion }) => {
       const result = resultByAlias.get(criterionAlias);
-      if (!result)
-        return unknown(criterion.criterionVersionId, 'The evaluator omitted this criterion.');
+      if (!result) return unknown(criterion.criterionId, 'The evaluator omitted this criterion.');
 
       const evidenceTurnIds = [...new Set(result.evidenceTurnIds)].flatMap((turnAlias) => {
         const turn = turnByAlias.get(turnAlias);
         return turn ? [turn.id] : [];
       });
-      if (result.result === 'fail' && evidenceTurnIds.length === 0) {
+      const evidenceActionIds = [...new Set(result.evidenceActionIds)].flatMap((actionAlias) => {
+        const action = actionByAlias.get(actionAlias);
+        return action ? [action.id] : [];
+      });
+      if (
+        result.result === 'fail' &&
+        evidenceTurnIds.length === 0 &&
+        evidenceActionIds.length === 0
+      ) {
         return unknown(
-          criterion.criterionVersionId,
-          'The evaluator reported a failure without valid transcript evidence.',
+          criterion.criterionId,
+          'The evaluator reported a failure without valid call evidence.',
         );
       }
       return {
-        criterionVersionId: criterion.criterionVersionId,
+        criterionId: criterion.criterionId,
         result: result.result,
         rationale: result.rationale,
         evidenceTurnIds,
+        evidenceActionIds,
       };
     }),
   };
 }
 
-function unknown(criterionVersionId: string, rationale: string) {
-  return { criterionVersionId, result: 'unknown' as const, rationale, evidenceTurnIds: [] };
-}
-
-function applicabilityText(value: Record<string, unknown>): string {
-  return typeof value.appliesWhen === 'string' ? value.appliesWhen : JSON.stringify(value);
+function unknown(criterionId: string, rationale: string) {
+  return {
+    criterionId,
+    result: 'unknown' as const,
+    rationale,
+    evidenceTurnIds: [],
+    evidenceActionIds: [],
+  };
 }
 
 function speaker(value: EvaluationTurn['speaker']): string {
-  if (value === 'agent') return 'Bot';
-  if (value === 'customer') return 'Human';
+  if (value === 'agent') return 'Voice Agent';
+  if (value === 'customer') return 'Customer';
   return 'Unknown';
 }
 
@@ -188,10 +209,4 @@ function alias(prefix: string, index: number): string {
 
 function safe(value: string): string {
   return value.replace(/\s+/g, ' ').replaceAll('<', '&lt;').replaceAll('>', '&gt;').trim();
-}
-
-function redact(value: string): string {
-  return value
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[EMAIL]')
-    .replace(/(?:\+?\d[\s().-]?){8,}\d/g, '[PHONE]');
 }

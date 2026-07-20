@@ -9,8 +9,6 @@
     "lint": "eslint src drizzle.config.ts vitest.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "seed:evals": "tsx src/development/seed-evaluation-corpus.ts",
-    "seed:theobroma": "tsx src/development/seed-theobroma-evaluation-agent.ts",
     "seed:prompt-remediation": "tsx src/development/seed-prompt-remediation-evaluation-agent.ts",
     "sync:location": "node dist/development/sync-location.js",
     "db:migrate:runtime": "node dist/database/migrate.js",
