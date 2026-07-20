@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import type { Recommendation } from '@copilot/contracts';
 
-defineProps<{ recommendations: Recommendation[] }>();
+withDefaults(
+  defineProps<{
+    recommendations: Recommendation[];
+    analyzedCallCount?: number;
+  }>(),
+  { analyzedCallCount: 0 },
+);
 
 const emit = defineEmits<{
   copy: [recommendation: Recommendation];
@@ -13,8 +19,8 @@ const emit = defineEmits<{
   <section class="recommendations-panel">
     <header class="compact-panel-header">
       <div>
-        <h2>Prompt recommendations</h2>
-        <p>Generated on demand from failed Success Criteria across calls</p>
+        <h2>AI recommendations</h2>
+        <p>Patterns across {{ analyzedCallCount }} analyzed calls</p>
       </div>
       <span>{{ recommendations.length }}</span>
     </header>
@@ -32,16 +38,16 @@ const emit = defineEmits<{
             {{ recommendation.affectedCallCount }} failed calls ·
             {{ recommendation.sampledFailureCount }} reviewed
           </small>
-          <button
-            class="delete-recommendation"
-            type="button"
-            title="Delete recommendation"
-            aria-label="Delete recommendation"
-            @click="emit('remove', recommendation)"
-          >
-            ×
-          </button>
         </div>
+        <button
+          class="delete-recommendation"
+          type="button"
+          title="Delete recommendation"
+          aria-label="Delete recommendation"
+          @click="emit('remove', recommendation)"
+        >
+          ×
+        </button>
         <h3>{{ recommendation.headline }}</h3>
         <p>{{ recommendation.explanation }}</p>
         <div class="copy-block">

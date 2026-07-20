@@ -457,8 +457,8 @@ p {
 }
 .criteria-list article {
   position: relative;
-  min-height: 104px;
-  padding: 12px 12px 42px;
+  min-height: 82px;
+  padding: 12px 70px 26px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   cursor: pointer;
@@ -525,31 +525,6 @@ p {
   cursor: default;
   opacity: 0.55;
 }
-.criterion-edit {
-  width: 100%;
-  min-height: 54px;
-  margin-top: 7px;
-  padding: 7px;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  resize: vertical;
-  font-size: 9px;
-}
-.criterion-edit-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-  margin-top: 5px;
-}
-.criterion-edit-actions button {
-  padding: 4px 7px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: white;
-  cursor: pointer;
-  font-size: 8px;
-}
-
 .agent-recommendations {
   height: calc(31vh - 24px);
   min-height: 170px;
@@ -564,6 +539,7 @@ p {
   overflow-x: auto;
 }
 .recommendation-card {
+  position: relative;
   display: flex;
   min-height: 0;
   flex-direction: column;
@@ -580,8 +556,12 @@ p {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  padding-right: 24px;
 }
 .delete-recommendation {
+  position: absolute;
+  top: 7px;
+  right: 8px;
   width: 22px;
   height: 22px;
   padding: 0;
@@ -596,23 +576,23 @@ p {
   border-radius: 999px;
   color: var(--primary);
   background: var(--primary-soft);
-  font-size: 9px;
+  font-size: 7px;
   font-weight: 800;
   text-transform: uppercase;
 }
 .recommendation-meta small {
   color: var(--subtle);
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 600;
 }
 .recommendation-card h3 {
   margin-top: 7px;
-  font-size: 13px;
+  font-size: 11px;
 }
 .recommendation-card > p {
   margin-top: 4px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 8px;
   line-height: 1.4;
 }
 .copy-block {
@@ -631,7 +611,7 @@ p {
 .copy-block span {
   display: block;
   color: var(--primary);
-  font-size: 8px;
+  font-size: 7px;
   font-weight: 800;
   text-transform: uppercase;
 }
@@ -640,7 +620,7 @@ p {
   margin-top: 4px;
   color: #303a52;
   font-family: inherit;
-  font-size: 10px;
+  font-size: 8px;
   line-height: 1.4;
   white-space: pre-wrap;
 }

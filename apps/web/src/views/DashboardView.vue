@@ -21,7 +21,6 @@ import {
   initializeMarketplaceSession,
   reanalyzeAgent,
   reanalyzeCall,
-  updateSuccessCriterion,
 } from '../lib/api';
 
 const route = useRoute();
@@ -38,8 +37,6 @@ const selectedCriterionId = ref<string | null>(null);
 const newCriterionName = ref('');
 const newCriterionDescription = ref('');
 const addingCriterion = ref(false);
-const editingCriterionId = ref<string | null>(null);
-const editingCriterionDescription = ref('');
 const generatingCriterionId = ref<string | null>(null);
 const loadingMoreCalls = ref(false);
 const reanalysisMenuOpen = ref(false);
@@ -160,28 +157,6 @@ async function removeCriterion(criterionId: string): Promise<void> {
   if (!agent.value) return;
   await deleteSuccessCriterion(agent.value.agent.id, criterionId);
   selectedCriterionId.value = null;
-  await loadRoute();
-}
-
-function beginCriterionEdit(criterionId: string, description: string): void {
-  editingCriterionId.value = criterionId;
-  editingCriterionDescription.value = description;
-}
-
-async function saveCriterionEdit(): Promise<void> {
-  if (
-    !agent.value ||
-    !editingCriterionId.value ||
-    editingCriterionDescription.value.trim().length < 10
-  )
-    return;
-  await updateSuccessCriterion(
-    agent.value.agent.id,
-    editingCriterionId.value,
-    editingCriterionDescription.value.trim(),
-  );
-  editingCriterionId.value = null;
-  editingCriterionDescription.value = '';
   await loadRoute();
 }
 
@@ -481,34 +456,12 @@ function delay(milliseconds: number): Promise<void> {
                 @click="selectCriterion(criterion.id)"
               >
                 <div class="criterion-actions">
-                  <button
-                    title="Edit criterion"
-                    @click.stop="beginCriterionEdit(criterion.id, criterion.description)"
-                  >
-                    ✎
-                  </button>
                   <button title="Delete criterion" @click.stop="removeCriterion(criterion.id)">
                     ×
                   </button>
                 </div>
                 <strong>{{ criterion.name }}</strong>
-                <template v-if="editingCriterionId === criterion.id">
-                  <textarea
-                    v-model="editingCriterionDescription"
-                    class="criterion-edit"
-                    @click.stop
-                  />
-                  <div class="criterion-edit-actions" @click.stop>
-                    <button @click="editingCriterionId = null">Cancel</button>
-                    <button
-                      :disabled="editingCriterionDescription.trim().length < 10"
-                      @click="saveCriterionEdit"
-                    >
-                      Save
-                    </button>
-                  </div>
-                </template>
-                <p v-else>{{ criterion.description }}</p>
+                <p>{{ criterion.description }}</p>
                 <span class="criterion-failures"
                   >{{ criterion.resultDistribution.fail }} failed</span
                 >
@@ -530,6 +483,7 @@ function delay(milliseconds: number): Promise<void> {
         <RecommendationPanel
           class="agent-recommendations"
           :recommendations="agent.recommendations"
+          :analyzed-call-count="agent.summary.callsAnalyzed"
           @copy="copyRecommendation"
           @remove="removeRecommendation"
         />

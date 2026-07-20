@@ -22,8 +22,10 @@ function recommendation(overrides: Partial<Recommendation> = {}): Recommendation
 describe('RecommendationPanel', () => {
   it('shows a paste-ready aggregate recommendation', () => {
     const wrapper = mount(RecommendationPanel, {
-      props: { recommendations: [recommendation()] },
+      props: { analyzedCallCount: 12, recommendations: [recommendation()] },
     });
+    expect(wrapper.text()).toContain('AI recommendations');
+    expect(wrapper.text()).toContain('Patterns across 12 analyzed calls');
     expect(wrapper.text()).toContain('6 failed calls · 6 reviewed');
     expect(wrapper.text()).toContain('The agent skipped a required confirmation.');
     expect(wrapper.text()).toContain('Copy and paste into your agent prompt');

@@ -1,4 +1,4 @@
-import type { CallAnalysisDetail } from '@copilot/contracts';
+import type { AgentAnalysisDetail, CallAnalysisDetail } from '@copilot/contracts';
 import { flushPromises, mount } from '@vue/test-utils';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -48,11 +48,41 @@ const emptyRecommendationCall: CallAnalysisDetail = {
   criterionResults: [],
 };
 
+const agentAnalysis: AgentAnalysisDetail = {
+  agent: {
+    id: 'd72b07d3-d8d5-45c4-a7b5-5cc2e47db17c',
+    name: 'Test Voice Agent',
+    lifecycleState: 'active',
+  },
+  summary: {
+    callsAnalyzed: 8,
+    averageDurationSeconds: 72,
+    flaggedIssueCount: 4,
+    callsWithFailures: 3,
+  },
+  configuration: null,
+  successCriteria: [
+    {
+      id: 'e06954c8-e9d3-46ae-948b-c5782204d75c',
+      name: 'Confirm before completion',
+      description: 'Confirm every material request before completing it.',
+      source: 'user',
+      resultDistribution: { pass: 4, fail: 2, notApplicable: 2, unknown: 0 },
+    },
+  ],
+  recommendations: [],
+  recommendationStatuses: [],
+  calls: [],
+  nextCallCursor: null,
+  totalCallCount: 0,
+};
+
 describe('DashboardView', () => {
   beforeEach(() => {
     api.initializeMarketplaceSession.mockResolvedValue(undefined);
     api.getObservabilityDashboard.mockResolvedValue({ agents: [] });
     api.getCallAnalysis.mockResolvedValue(emptyRecommendationCall);
+    api.getAgentAnalysis.mockResolvedValue(agentAnalysis);
   });
 
   it('renders the voice-agent fleet', async () => {
@@ -68,6 +98,22 @@ describe('DashboardView', () => {
     );
     expect(wrapper.text()).toContain('Flagged issues');
     expect(wrapper.find('.call-recommendations').exists()).toBe(false);
+  });
+
+  it('preserves the established agent workspace around the new criteria workflow', async () => {
+    const { wrapper } = await mountView(
+      '/?locationId=test&agentId=d72b07d3-d8d5-45c4-a7b5-5cc2e47db17c',
+    );
+
+    const workspace = wrapper.get('.agent-workspace');
+    expect(workspace.find('.calls-panel').exists()).toBe(true);
+    expect(workspace.find('.criteria-panel').exists()).toBe(true);
+    expect(wrapper.get('.agent-recommendations').text()).toContain('AI recommendations');
+    expect(wrapper.get('.agent-recommendations').text()).toContain(
+      'Patterns across 8 analyzed calls',
+    );
+    expect(wrapper.find('button[title="Edit criterion"]').exists()).toBe(false);
+    expect(wrapper.get('.generate-recommendation').text()).toContain('Generate prompt guidance');
   });
 
   it('highlights an executed Call Action cited by a failed criterion', async () => {
