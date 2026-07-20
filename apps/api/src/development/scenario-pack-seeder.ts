@@ -7,8 +7,8 @@ import {
   voiceAgentConfigurations,
   webhookInbox,
 } from '@copilot/database';
-import { config } from 'dotenv';
 import { drizzle } from 'drizzle-orm/node-postgres';
+import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { Pool } from 'pg';
@@ -54,7 +54,8 @@ export interface SeedScenarioPackResult {
 export async function seedScenarioPack(
   pack: EvaluationScenarioPack,
 ): Promise<SeedScenarioPackResult> {
-  config({ path: resolve(process.cwd(), '../../.env'), quiet: true });
+  const envPath = resolve(process.cwd(), '../../.env');
+  if (existsSync(envPath)) process.loadEnvFile(envPath);
 
   const databaseUrl = process.env.DATABASE_URL;
   const highLevelLocationId = process.env.SUB_ACCOUNT_LOCATION_ID;
