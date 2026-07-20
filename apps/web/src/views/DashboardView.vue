@@ -354,6 +354,13 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
+function formatOverviewValue(value: string): string {
+  return value
+    .split('_')
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(' ');
+}
+
 function criterionVisualStatus(
   result: CallAnalysisDetail['criterionResults'][number]['result'],
 ): 'critical' | 'clear' | 'not_observable' | 'not_applicable' {
@@ -910,18 +917,32 @@ function delay(milliseconds: number): Promise<void> {
                 <dl>
                   <div>
                     <dt>Intent</dt>
-                    <dd>Not classified</dd>
+                    <dd>{{ call.overview?.intent || 'Run analysis to classify' }}</dd>
                   </div>
                   <div>
                     <dt>Outcome</dt>
-                    <dd>Not assessed</dd>
+                    <dd>
+                      {{ call.overview ? formatOverviewValue(call.overview.outcome) : 'Pending' }}
+                    </dd>
                   </div>
                 </dl>
               </section>
 
               <section class="data-panel reference-rail-card call-sentiment-reference">
                 <h2>Call sentiment</h2>
-                <p>Sentiment is not part of the criteria-only call evaluation.</p>
+                <div v-if="call.overview" class="reference-sentiment-visual">
+                  <div
+                    class="reference-sentiment-donut"
+                    :data-sentiment="call.overview.sentiment.label"
+                  >
+                    <div>
+                      <strong>{{ formatOverviewValue(call.overview.sentiment.label) }}</strong>
+                      <small>Customer</small>
+                    </div>
+                  </div>
+                  <p>{{ call.overview.sentiment.rationale }}</p>
+                </div>
+                <p v-else>Rerun analysis to generate the call overview.</p>
               </section>
 
               <section class="data-panel reference-rail-card checklist-reference">

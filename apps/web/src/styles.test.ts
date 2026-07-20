@@ -23,4 +23,13 @@ describe('established observability layout', () => {
       /\.call-reference-rail:hover \.call-sidebar-strip,[\s\S]*visibility:\s*hidden;/,
     );
   });
+
+  it('keeps all four agent statistics on one compressed row in a narrow embed', () => {
+    expect(styles).toMatch(
+      /@media \(max-width: 760px\)[\s\S]*?\.app-shell\[data-view='agent'\] \.summary-strip\s*\{[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);/,
+    );
+    expect(styles).not.toMatch(
+      /@media \(max-width: 760px\)[\s\S]*?\.summary-strip,[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/,
+    );
+  });
 });

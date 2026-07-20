@@ -7,7 +7,33 @@ export const criterionEvaluationStatusSchema = z.enum([
   'unknown',
 ]);
 
+export const callOutcomeSchema = z.enum([
+  'resolved',
+  'partially_resolved',
+  'unresolved',
+  'not_applicable',
+  'unknown',
+]);
+
+export const callSentimentLabelSchema = z.enum([
+  'positive',
+  'neutral',
+  'negative',
+  'mixed',
+  'unknown',
+]);
+
+export const callOverviewSchema = z.object({
+  intent: z.string().min(1).max(160),
+  outcome: callOutcomeSchema,
+  sentiment: z.object({
+    label: callSentimentLabelSchema,
+    rationale: z.string().min(1).max(500),
+  }),
+});
+
 export const modelCriterionEvaluationSchema = z.object({
+  overview: callOverviewSchema,
   criterionResults: z.array(
     z.object({
       criterionId: z.string().regex(/^C\d{2,}$/),
@@ -20,6 +46,7 @@ export const modelCriterionEvaluationSchema = z.object({
 });
 
 export type CriterionEvaluationStatus = z.infer<typeof criterionEvaluationStatusSchema>;
+export type CallOverview = z.infer<typeof callOverviewSchema>;
 export type ModelCriterionEvaluation = z.infer<typeof modelCriterionEvaluationSchema>;
 
 export interface EvaluationCriterion {
@@ -61,5 +88,6 @@ export interface CriterionResult {
 }
 
 export interface CriterionEvaluation {
+  overview: CallOverview;
   criterionResults: CriterionResult[];
 }

@@ -360,6 +360,14 @@ export const callAnalysisRuns = pgTable(
       .$type<Record<string, unknown>>()
       .default({})
       .notNull(),
+    callOverview: jsonb('call_overview').$type<{
+      intent: string;
+      outcome: 'resolved' | 'partially_resolved' | 'unresolved' | 'not_applicable' | 'unknown';
+      sentiment: {
+        label: 'positive' | 'neutral' | 'negative' | 'mixed' | 'unknown';
+        rationale: string;
+      };
+    }>(),
     evaluatorVersion: varchar('evaluator_version', { length: 48 }).notNull(),
     outputSchemaVersion: integer('output_schema_version').default(1).notNull(),
     codeVersion: varchar('code_version', { length: 64 }),

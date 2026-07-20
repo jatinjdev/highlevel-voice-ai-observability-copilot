@@ -31,8 +31,9 @@ The categorical result of applying one Success Criterion to one Call: `pass`, `f
 _Avoid_: Score, grade, weighted result
 
 **Call Analysis**:
-One checklist evaluation of a completed Call against the Voice Agent's current Success Criteria.
-It does not generate recommendations.
+One checklist evaluation of a completed Call against the Voice Agent's current Success Criteria,
+plus an informational Call Overview containing intent, outcome, and customer sentiment. The overview
+does not influence Criterion Results or generate recommendations.
 _Avoid_: Prompt review, root-cause analysis, call recommendation
 
 **Agent Analysis**:
@@ -55,6 +56,8 @@ _Avoid_: User Action, follow-up task, queue item
 ## Invariants
 
 - Call Analysis receives Call Evidence and Success Criterion descriptions only.
+- Call Overview is descriptive metadata from the same model request and never drives flags,
+  adherence, aggregation, or recommendations.
 - Success Criterion names are unique within a Voice Agent and are not editable.
 - Recommendations exist only at Voice Agent level and one may exist per Success Criterion.
 - Recommendations are generated or regenerated only by an explicit user request.

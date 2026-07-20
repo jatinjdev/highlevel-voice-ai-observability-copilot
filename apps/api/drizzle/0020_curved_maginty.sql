@@ -1,0 +1,1 @@
+ALTER TABLE "call_analysis_runs" ADD COLUMN "call_overview" jsonb;

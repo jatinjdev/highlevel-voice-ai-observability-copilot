@@ -58,6 +58,14 @@ describe('criterion evaluation', () => {
       modelId: 'test:model',
       generateObject: () =>
         Promise.resolve({
+          overview: {
+            intent: 'Order a cake',
+            outcome: 'unresolved',
+            sentiment: {
+              label: 'neutral',
+              rationale: 'The customer remained matter-of-fact throughout the call.',
+            },
+          },
           criterionResults: [
             {
               criterionId: 'C01',
@@ -70,6 +78,14 @@ describe('criterion evaluation', () => {
         }),
     } as unknown as StructuredOutputLanguageModel;
     const result = await new ModelCriterionEvaluator(model).evaluate(input);
+    expect(result.overview).toEqual({
+      intent: 'Order a cake',
+      outcome: 'unresolved',
+      sentiment: {
+        label: 'neutral',
+        rationale: 'The customer remained matter-of-fact throughout the call.',
+      },
+    });
     expect(result.criterionResults).toEqual([
       {
         criterionId: 'criterion-1',

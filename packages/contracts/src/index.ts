@@ -344,6 +344,15 @@ export const criterionResultSchema = z.object({
   actionEvidence: z.array(actionEvidenceCitationSchema),
 });
 
+export const callOverviewSchema = z.object({
+  intent: z.string(),
+  outcome: z.enum(['resolved', 'partially_resolved', 'unresolved', 'not_applicable', 'unknown']),
+  sentiment: z.object({
+    label: z.enum(['positive', 'neutral', 'negative', 'mixed', 'unknown']),
+    rationale: z.string(),
+  }),
+});
+
 export const callAnalysisDetailSchema = z.object({
   call: z.object({
     id: z.uuid(),
@@ -379,6 +388,7 @@ export const callAnalysisDetailSchema = z.object({
       completedAt: z.iso.datetime().nullable(),
     })
     .nullable(),
+  overview: callOverviewSchema.nullable(),
   criterionResults: z.array(criterionResultSchema),
 });
 

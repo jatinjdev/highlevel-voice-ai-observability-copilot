@@ -22,7 +22,7 @@ import { WorkerDatabaseService } from './database.service';
 import type { CallEvaluationInput, CriterionEvaluation } from './evaluation.types';
 
 const CONSUMER_NAME = 'analysis-worker-v5';
-const EVALUATOR_VERSION = 'criteria-checklist-v1';
+const EVALUATOR_VERSION = 'criteria-checklist-v2';
 const ANALYSIS_LEASE_MS = 5 * 60_000;
 
 interface AnalysisClaim {
@@ -77,9 +77,7 @@ export class AnalysisService {
     if (claim === 'busy') return 'busy';
 
     try {
-      const evaluation = criteria.length
-        ? await this.callAnalyzer.analyze(input)
-        : { criterionResults: [] };
+      const evaluation = await this.callAnalyzer.analyze(input);
       await this.complete(event, claim, input, evaluation);
       return 'processed';
     } catch (error) {
@@ -228,6 +226,7 @@ export class AnalysisService {
         .update(callAnalysisRuns)
         .set({
           status: 'completed',
+          callOverview: evaluation.overview,
           provider: this.callAnalyzer.runtime.provider,
           model: this.callAnalyzer.runtime.model,
           evaluatorVersion: EVALUATOR_VERSION,

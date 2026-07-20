@@ -4,10 +4,46 @@ import {
   agentAnalysisSummarySchema,
   agentReanalysisRequestSchema,
   agentReanalysisResponseSchema,
+  callAnalysisDetailSchema,
   normalizeCriterionName,
   pipelineSummarySchema,
   recommendationSchema,
 } from './index';
+
+describe('callAnalysisDetailSchema', () => {
+  it('preserves the informational call overview alongside criterion results', () => {
+    const result = callAnalysisDetailSchema.safeParse({
+      call: {
+        id: '1bfb4a89-e709-4f65-a5d0-905ff61cbd49',
+        highLevelCallId: 'highlevel-call-1',
+        agentId: 'd72b07d3-d8d5-45c4-a7b5-5cc2e47db17c',
+        agentName: 'Test Voice Agent',
+        createdAt: '2026-07-18T00:00:00.000Z',
+        durationSeconds: 42,
+        direction: 'inbound',
+        sourceSummary: null,
+        extractedData: {},
+        turns: [],
+        actionEvents: [],
+      },
+      analysis: null,
+      overview: {
+        intent: 'Order a cake',
+        outcome: 'unresolved',
+        sentiment: {
+          label: 'negative',
+          rationale: 'The customer expressed frustration about the damaged order.',
+        },
+      },
+      criterionResults: [],
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data).toHaveProperty('overview.intent', 'Order a cake');
+    expect(result.data).toHaveProperty('overview.sentiment.label', 'negative');
+  });
+});
 
 describe('normalizeCriterionName', () => {
   it('provides one canonical uniqueness key for criterion names', () => {

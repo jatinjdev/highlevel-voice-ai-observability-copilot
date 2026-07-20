@@ -10,6 +10,11 @@ the system compares recent failures with the Voice Agent's current prompt before
 replaceable agent-level recommendation. This trades historical criterion comparability for a much
 smaller, explainable assessment product whose judgments and guidance cannot be confused.
 
+The same schema-constrained model request also returns an informational Call Overview with the
+caller's intent, outcome, and expressed sentiment. These fields exist only to provide context in
+the call-review sidebar. They are not Criterion Results and cannot create flags, affect adherence,
+participate in agent aggregation, or generate recommendations.
+
 Recommendation generation samples at most the 20 most recent current failures for the selected
 criterion. A prompt change invalidates stored guidance, and a response produced for an older prompt
 or superseded request is discarded rather than published.

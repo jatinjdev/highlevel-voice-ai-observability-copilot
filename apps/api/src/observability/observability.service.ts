@@ -192,6 +192,7 @@ export class ObservabilityService {
             completedAt: analysis.completedAt?.toISOString() ?? null,
           }
         : null,
+      overview: analysis?.callOverview ?? null,
       criterionResults: results,
     });
   }

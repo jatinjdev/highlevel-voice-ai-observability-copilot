@@ -21,7 +21,7 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('./lib/api', () => api);
 
-const emptyRecommendationCall: CallAnalysisDetail = {
+const emptyRecommendationCall = {
   call: {
     id: '1bfb4a89-e709-4f65-a5d0-905ff61cbd49',
     highLevelCallId: 'highlevel-call-1',
@@ -45,8 +45,16 @@ const emptyRecommendationCall: CallAnalysisDetail = {
     evaluatorVersion: 'test-v1',
     completedAt: '2026-07-18T00:00:01.000Z',
   },
+  overview: {
+    intent: 'Report a damaged birthday cake',
+    outcome: 'unresolved',
+    sentiment: {
+      label: 'negative',
+      rationale: 'The customer became frustrated after the agent refused to help.',
+    },
+  },
   criterionResults: [],
-};
+} as unknown as CallAnalysisDetail;
 
 const agentAnalysis: AgentAnalysisDetail = {
   agent: {
@@ -162,7 +170,17 @@ describe('DashboardView', () => {
 
     expect(wrapper.get('.call-transcript-reference h1').text()).toBe('Transcript Forensic View');
     expect(wrapper.get('.call-summary-reference').text()).toContain('damaged birthday cake');
-    expect(wrapper.get('.call-sentiment-reference').text()).toContain('Call sentiment');
+    expect(wrapper.get('.call-summary-reference').text()).toContain(
+      'Report a damaged birthday cake',
+    );
+    expect(wrapper.get('.call-summary-reference').text()).toContain('Unresolved');
+    expect(wrapper.get('.call-sentiment-reference').text()).toContain('Negative');
+    expect(wrapper.get('.call-sentiment-reference').text()).toContain(
+      'The customer became frustrated after the agent refused to help.',
+    );
+    expect(wrapper.text()).not.toContain('Not classified');
+    expect(wrapper.text()).not.toContain('Not assessed');
+    expect(wrapper.text()).not.toContain('Sentiment is not part of the criteria-only');
     expect(wrapper.get('.checklist-reference').text()).toContain('Safe and trustworthy behavior');
     expect(wrapper.find('.call-reference-rail').exists()).toBe(true);
     expect(wrapper.text()).not.toContain('00:12');
