@@ -100,6 +100,59 @@ describe('DashboardView', () => {
     expect(wrapper.find('.call-recommendations').exists()).toBe(false);
   });
 
+  it('shows call context and highlights the cited transcript text', async () => {
+    api.getCallAnalysis.mockResolvedValue({
+      ...emptyRecommendationCall,
+      call: {
+        ...emptyRecommendationCall.call,
+        sourceSummary: 'The customer reported a damaged birthday cake.',
+        turns: [
+          {
+            id: 'b39c6876-50bc-4287-ae39-d83c12dd9c56',
+            ordinal: 1,
+            speaker: 'agent',
+            text: 'You probably handled the box badly after delivery.',
+            sourceStartMs: 12_000,
+            sourceEndMs: 16_000,
+          },
+        ],
+      },
+      criterionResults: [
+        {
+          id: '2e495829-8710-448d-bdb1-3fa843581a48',
+          criterionId: 'e06954c8-e9d3-46ae-948b-c5782204d75c',
+          criterionName: 'Safe and trustworthy behavior',
+          criterionDescription: 'The Voice Agent must avoid unsupported blame.',
+          result: 'fail',
+          rationale: 'The agent blamed the customer without evidence.',
+          evidence: [
+            {
+              turnId: 'b39c6876-50bc-4287-ae39-d83c12dd9c56',
+              turnOrdinal: 1,
+              speaker: 'agent',
+              text: 'You probably handled the box badly after delivery.',
+            },
+          ],
+          actionEvidence: [],
+        },
+      ],
+    } satisfies CallAnalysisDetail);
+
+    const { wrapper } = await mountView(
+      '/?locationId=test&callId=1bfb4a89-e709-4f65-a5d0-905ff61cbd49',
+    );
+
+    expect(wrapper.get('.call-summary').text()).toContain('damaged birthday cake');
+    expect(wrapper.get('.criteria-checklist').text()).toContain('Safe and trustworthy behavior');
+    expect(wrapper.text()).toContain('00:12');
+
+    await wrapper.get('.criteria-checklist button[data-result="fail"]').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.get('.transcript-copy').attributes('data-highlighted')).toBe('true');
+    expect(wrapper.get('.evidence-label').text()).toContain('Flagged evidence');
+  });
+
   it('preserves the established agent workspace around the new criteria workflow', async () => {
     const { wrapper } = await mountView(
       '/?locationId=test&agentId=d72b07d3-d8d5-45c4-a7b5-5cc2e47db17c',
@@ -156,7 +209,7 @@ describe('DashboardView', () => {
     const { wrapper } = await mountView(
       '/?locationId=test&callId=1bfb4a89-e709-4f65-a5d0-905ff61cbd49',
     );
-    const issue = wrapper.find('.issue-list button');
+    const issue = wrapper.find('.criteria-checklist button[data-result="fail"]');
     await issue.trigger('click');
     await flushPromises();
 

@@ -61,6 +61,12 @@ const visibleCalls = computed(() => {
 const failedResults = computed(
   () => call.value?.criterionResults.filter(({ result }) => result === 'fail') ?? [],
 );
+const orderedCriterionResults = computed(() => {
+  const order = { fail: 0, unknown: 1, pass: 2, not_applicable: 3 } as const;
+  return [...(call.value?.criterionResults ?? [])].sort(
+    (left, right) => order[left.result] - order[right.result],
+  );
+});
 const highlightedTurnIds = computed(() => {
   const result = call.value?.criterionResults.find(
     ({ criterionId }) => criterionId === selectedCriterionId.value,
@@ -288,6 +294,21 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
+function formatTurnTime(milliseconds: number | null): string | null {
+  if (milliseconds === null) return null;
+  const totalSeconds = Math.floor(milliseconds / 1_000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function criterionStatusLabel(result: CallAnalysisDetail['criterionResults'][number]['result']) {
+  if (result === 'fail') return 'Flagged';
+  if (result === 'pass') return 'Passed';
+  if (result === 'not_applicable') return 'Not applicable';
+  return 'Unknown';
+}
+
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
@@ -508,8 +529,8 @@ function delay(milliseconds: number): Promise<void> {
           <section class="data-panel transcript-panel">
             <header class="compact-panel-header">
               <div>
-                <h2>Transcript</h2>
-                <p>Failed transcript lines and executed actions highlight when selected</p>
+                <h2>Transcript forensic view</h2>
+                <p>Select a flagged criterion to reveal its call evidence</p>
               </div>
             </header>
             <div class="transcript internal-scroll">
@@ -523,8 +544,23 @@ function delay(milliseconds: number): Promise<void> {
                   turn.speaker === 'agent' ? 'AI' : 'C'
                 }}</span>
                 <div>
-                  <strong>{{ turn.speaker === 'agent' ? call.call.agentName : 'Customer' }}</strong>
-                  <p>{{ turn.text }}</p>
+                  <div class="transcript-speaker-line">
+                    <strong>{{
+                      turn.speaker === 'agent' ? call.call.agentName : 'Customer'
+                    }}</strong>
+                    <time v-if="formatTurnTime(turn.sourceStartMs)">{{
+                      formatTurnTime(turn.sourceStartMs)
+                    }}</time>
+                  </div>
+                  <p
+                    class="transcript-copy"
+                    :data-highlighted="highlightedTurnIds.has(turn.id)"
+                  >
+                    {{ turn.text }}
+                  </p>
+                  <span v-if="highlightedTurnIds.has(turn.id)" class="evidence-label">
+                    Flagged evidence
+                  </span>
                 </div>
               </article>
               <div v-if="call.call.actionEvents.length" class="call-actions">
@@ -543,38 +579,59 @@ function delay(milliseconds: number): Promise<void> {
                       {{ action.actionType || 'Action' }} ·
                       {{ action.outcome || 'Outcome unknown' }}
                     </p>
+                    <span v-if="highlightedActionIds.has(action.id)" class="evidence-label">
+                      Flagged evidence
+                    </span>
                   </div>
                 </article>
               </div>
             </div>
           </section>
-          <section class="data-panel issue-panel">
-            <header class="compact-panel-header">
-              <div>
-                <h2>Flagged issues</h2>
-                <p>{{ failedResults.length }} criteria failed</p>
+          <aside class="call-context">
+            <section class="data-panel call-summary">
+              <header class="compact-panel-header">
+                <div><h2>Call summary</h2></div>
+              </header>
+              <p>{{ call.call.sourceSummary || 'No call summary was supplied.' }}</p>
+            </section>
+            <section class="data-panel checklist-panel">
+              <header class="compact-panel-header">
+                <div>
+                  <h2>Success criteria</h2>
+                  <p>{{ failedResults.length }} flagged</p>
+                </div>
+              </header>
+              <div v-if="orderedCriterionResults.length" class="criteria-checklist internal-scroll">
+                <button
+                  v-for="result in orderedCriterionResults"
+                  :key="result.id"
+                  :data-result="result.result"
+                  :data-selected="selectedCriterionId === result.criterionId"
+                  :disabled="!result.evidence.length && !result.actionEvidence.length"
+                  @click="
+                    selectCriterion(
+                      result.criterionId,
+                      result.evidence[0]?.turnId,
+                      result.actionEvidence[0]?.id,
+                    )
+                  "
+                >
+                  <span class="criterion-state" :data-result="result.result">{{
+                    result.result === 'fail' ? '×' : '✓'
+                  }}</span>
+                  <span class="criterion-copy">
+                    <strong>{{ result.criterionName }}</strong>
+                    <span>{{ result.rationale }}</span>
+                  </span>
+                  <span class="criterion-status" :data-result="result.result">{{
+                    criterionStatusLabel(result.result)
+                  }}</span>
+                  <small v-if="result.result === 'fail'">View evidence</small>
+                </button>
               </div>
-            </header>
-            <div v-if="failedResults.length" class="issue-list internal-scroll">
-              <button
-                v-for="result in failedResults"
-                :key="result.id"
-                :data-selected="selectedCriterionId === result.criterionId"
-                @click="
-                  selectCriterion(
-                    result.criterionId,
-                    result.evidence[0]?.turnId,
-                    result.actionEvidence[0]?.id,
-                  )
-                "
-              >
-                <strong>{{ result.criterionName }}</strong
-                ><span>{{ result.rationale }}</span
-                ><small>View evidence</small>
-              </button>
-            </div>
-            <div v-else class="panel-empty">No criteria failed for this call.</div>
-          </section>
+              <div v-else class="panel-empty">No criteria were evaluated for this call.</div>
+            </section>
+          </aside>
         </div>
       </template>
     </div>

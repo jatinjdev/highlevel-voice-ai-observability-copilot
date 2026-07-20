@@ -351,7 +351,7 @@ p {
 .calls-panel,
 .criteria-panel,
 .transcript-panel,
-.issue-panel,
+.checklist-panel,
 .recommendations-panel {
   display: flex;
   min-height: 0;
@@ -672,6 +672,19 @@ p {
   gap: 14px;
   margin-top: 14px;
 }
+.call-context {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+}
+.call-summary > p {
+  padding: 12px 14px 14px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
 .transcript {
   padding: 10px 16px 18px;
 }
@@ -710,11 +723,39 @@ p {
 .transcript strong {
   font-size: 10px;
 }
+.transcript-speaker-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.transcript-speaker-line time {
+  color: var(--subtle);
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+}
 .transcript p {
   margin-top: 5px;
   color: #354258;
   font-size: 11px;
   line-height: 1.55;
+}
+.transcript-copy[data-highlighted='true'] {
+  width: fit-content;
+  margin-left: -3px;
+  padding: 2px 3px 1px;
+  border-bottom: 2px solid #df5b52;
+  background: var(--red-soft);
+}
+.evidence-label {
+  display: block;
+  width: fit-content;
+  margin-top: 6px;
+  color: var(--red);
+  font-size: 7px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 .call-actions {
   margin-top: 10px;
@@ -731,35 +772,77 @@ p {
 .call-action-row p {
   text-transform: capitalize;
 }
-.issue-list {
+.criteria-checklist {
   display: grid;
   align-content: start;
   gap: 8px;
   padding: 10px;
 }
-.issue-list button {
+.criteria-checklist button {
   display: grid;
-  gap: 6px;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  align-items: start;
   padding: 11px;
-  border: 1px solid #f0c2be;
+  border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fffafa;
+  background: white;
   cursor: pointer;
   text-align: left;
 }
-.issue-list button[data-selected='true'] {
+.criteria-checklist button[data-result='fail'] {
+  border-color: #f0c2be;
+  background: #fffafa;
+}
+.criteria-checklist button[data-selected='true'] {
   outline: 2px solid rgb(180 35 24 / 20%);
 }
-.issue-list strong {
-  color: var(--red);
+.criteria-checklist button:disabled {
+  cursor: default;
+}
+.criterion-state {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 999px;
+  color: #5f6b7b;
+  background: #edf0f5;
+  font-size: 10px;
+  font-weight: 800;
+}
+.criterion-state[data-result='fail'] {
+  color: white;
+  background: var(--red);
+}
+.criterion-copy {
+  display: grid;
+  gap: 4px;
+}
+.criterion-copy strong {
+  color: var(--ink);
   font-size: 10px;
 }
-.issue-list span {
+.criterion-copy > span {
   color: var(--muted);
   font-size: 9px;
   line-height: 1.4;
 }
-.issue-list small {
+.criterion-status {
+  padding: 3px 6px;
+  border-radius: 999px;
+  color: var(--subtle);
+  background: #f0f3f8;
+  font-size: 7px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.criterion-status[data-result='fail'] {
+  color: var(--red);
+  background: var(--red-soft);
+}
+.criteria-checklist small {
+  grid-column: 2;
   color: var(--primary);
   font-size: 8px;
   font-weight: 750;
@@ -781,8 +864,11 @@ p {
   .calls-panel,
   .criteria-panel,
   .transcript-panel,
-  .issue-panel {
+  .checklist-panel {
     height: 420px;
+  }
+  .call-context {
+    grid-template-rows: auto 420px;
   }
   .agent-recommendations {
     height: 280px;
