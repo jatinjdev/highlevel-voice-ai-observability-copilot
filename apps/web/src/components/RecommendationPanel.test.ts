@@ -25,10 +25,10 @@ describe('RecommendationPanel', () => {
       props: { analyzedCallCount: 12, recommendations: [recommendation()] },
     });
     expect(wrapper.text()).toContain('AI recommendations');
-    expect(wrapper.text()).toContain('Patterns across 12 analyzed calls');
-    expect(wrapper.text()).toContain('6 failed calls · 6 reviewed');
+    expect(wrapper.text()).toContain('Aggregated from 12 analyzed calls');
+    expect(wrapper.text()).toContain('Seen in 6 calls');
     expect(wrapper.text()).toContain('The agent skipped a required confirmation.');
-    expect(wrapper.text()).toContain('Copy and paste into your agent prompt');
+    expect(wrapper.text()).toContain('Paste this into your agent prompt');
     expect(wrapper.text()).toContain('Confirm the request before completing it.');
   });
 
@@ -37,7 +37,14 @@ describe('RecommendationPanel', () => {
     const wrapper = mount(RecommendationPanel, {
       props: { recommendations: [item] },
     });
-    await wrapper.get('button[aria-label="Copy prompt change"]').trigger('click');
+    await wrapper.get('button[aria-label="Copy prompt"]').trigger('click');
     expect(wrapper.emitted('copy')).toEqual([[item]]);
+  });
+
+  it('keeps deletion as a small action on the restored recommendation card', async () => {
+    const item = recommendation();
+    const wrapper = mount(RecommendationPanel, { props: { recommendations: [item] } });
+    await wrapper.get('button[aria-label="Delete recommendation"]').trigger('click');
+    expect(wrapper.emitted('remove')).toEqual([[item]]);
   });
 });

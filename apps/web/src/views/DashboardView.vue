@@ -38,6 +38,8 @@ interface TurnSegment {
   annotationKey: string | null;
 }
 
+type CallIssueFilter = 'all' | 'flagged' | 'unflagged';
+
 const route = useRoute();
 const router = useRouter();
 const dashboard = ref<ObservabilityDashboard | null>(null);
@@ -55,6 +57,9 @@ const addingCriterion = ref(false);
 const generatingCriterionId = ref<string | null>(null);
 const loadingMoreCalls = ref(false);
 const reanalysisMenuOpen = ref(false);
+const callFilterOpen = ref(false);
+const callIssueFilter = ref<CallIssueFilter>('all');
+const criterionComposerOpen = ref(false);
 const selectedAnnotationKey = ref<string | null>(null);
 const callSidebarOpen = ref(false);
 
@@ -63,11 +68,27 @@ const filteredAgents = computed(() => {
   const term = search.value.trim().toLowerCase();
   return (dashboard.value?.agents ?? []).filter(({ name }) => name.toLowerCase().includes(term));
 });
+const selectedCriterion = computed(() =>
+  agent.value?.successCriteria.find(({ id }) => id === selectedCriterionId.value),
+);
+const agentAdherence = computed(() => {
+  const distribution = (agent.value?.successCriteria ?? []).reduce(
+    (total, criterion) => ({
+      pass: total.pass + criterion.resultDistribution.pass,
+      fail: total.fail + criterion.resultDistribution.fail,
+    }),
+    { pass: 0, fail: 0 },
+  );
+  const observable = distribution.pass + distribution.fail;
+  return observable ? Math.round((distribution.pass / observable) * 100) : null;
+});
 const visibleCalls = computed(() => {
   const term = callSearch.value.trim().toLowerCase();
   return (agent.value?.calls ?? []).filter((item) => {
     if (selectedCriterionId.value && !item.failedCriterionIds.includes(selectedCriterionId.value))
       return false;
+    if (callIssueFilter.value === 'flagged' && item.flaggedIssueCount === 0) return false;
+    if (callIssueFilter.value === 'unflagged' && item.flaggedIssueCount > 0) return false;
     return (
       !term ||
       item.highLevelCallId.toLowerCase().includes(term) ||
@@ -170,6 +191,7 @@ async function addCriterion(): Promise<void> {
     );
     newCriterionName.value = '';
     newCriterionDescription.value = '';
+    criterionComposerOpen.value = false;
     await loadRoute();
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : 'The criterion could not be added.';
@@ -257,6 +279,12 @@ async function runAgentAnalysis(window: '24h' | '7d'): Promise<void> {
   notice.value = result.queuedCallCount
     ? `${result.queuedCallCount} calls queued for analysis`
     : 'No calls found in that window';
+}
+
+function selectCallIssueFilter(filter: CallIssueFilter): void {
+  callIssueFilter.value = filter;
+  callFilterOpen.value = false;
+  if (filter === 'unflagged') selectedCriterionId.value = null;
 }
 
 async function copyRecommendation(recommendation: Recommendation): Promise<void> {
@@ -440,22 +468,30 @@ function delay(milliseconds: number): Promise<void> {
       <div v-if="loading" class="loading-panel">Loading voice agent analysis…</div>
 
       <template v-else-if="dashboard">
-        <header class="page-heading dashboard-heading">
-          <div><h1>Voice AI Observability Copilot</h1></div>
+        <section class="page-heading dashboard-heading">
+          <div>
+            <h1>Voice AI Observability Copilot</h1>
+            <p>Review agent performance and open the calls that need a decision.</p>
+          </div>
           <label class="search-field">
-            <span>⌕</span><input v-model="search" placeholder="Search voice agents" />
+            <span aria-hidden="true">⌕</span>
+            <input v-model="search" type="search" placeholder="Search agents by name…" />
           </label>
-        </header>
+        </section>
         <section class="data-panel fleet-panel">
-          <div class="table-scroll">
+          <div v-if="!filteredAgents.length" class="empty-panel">
+            No Voice Agents are available for this location.
+          </div>
+          <div v-else class="table-scroll">
             <table class="data-table fleet-table">
               <thead>
                 <tr>
                   <th>Agent name</th>
-                  <th>Calls analyzed</th>
-                  <th>Avg. duration</th>
-                  <th>Flagged issues</th>
-                  <th></th>
+                  <th class="numeric">Calls analyzed</th>
+                  <th class="numeric">Avg. duration</th>
+                  <th class="numeric">Script adherence</th>
+                  <th class="numeric">Flagged Issues</th>
+                  <th aria-label="Open"></th>
                 </tr>
               </thead>
               <tbody>
@@ -466,16 +502,19 @@ function delay(milliseconds: number): Promise<void> {
                 >
                   <td>
                     <div class="agent-cell">
-                      <span class="agent-icon">AI</span><strong>{{ item.name }}</strong>
+                      <span class="agent-icon">AI</span>
+                      <div>
+                        <strong>{{ item.name }}</strong
+                        ><small>No open insight</small>
+                      </div>
                     </div>
                   </td>
-                  <td>{{ item.summary.callsAnalyzed }}</td>
-                  <td>{{ formatDuration(item.summary.averageDurationSeconds) }}</td>
-                  <td>
-                    <span class="issue-count" :data-active="item.summary.flaggedIssueCount > 0">{{
-                      item.summary.flaggedIssueCount
-                    }}</span>
+                  <td class="numeric mono">{{ item.summary.callsAnalyzed }}</td>
+                  <td class="numeric mono">
+                    {{ formatDuration(item.summary.averageDurationSeconds) }}
                   </td>
+                  <td class="numeric mono muted">—</td>
+                  <td class="numeric mono">{{ item.summary.flaggedIssueCount }}</td>
                   <td class="row-chevron">›</td>
                 </tr>
               </tbody>
@@ -489,19 +528,67 @@ function delay(milliseconds: number): Promise<void> {
           <button @click="navigate({})">Voice Agents</button><span>›</span
           ><strong>{{ agent.agent.name }}</strong>
         </nav>
-        <header class="page-heading agent-heading">
+        <section class="page-heading agent-heading">
           <h1>{{ agent.agent.name }}</h1>
-          <div class="reanalysis-control">
-            <button class="secondary-button" @click="reanalysisMenuOpen = !reanalysisMenuOpen">
-              ↻ Analyze calls ▾
-            </button>
-            <div v-if="reanalysisMenuOpen" class="action-menu">
-              <button @click="runAgentAnalysis('24h')">Last 24 hours</button>
-              <button @click="runAgentAnalysis('7d')">Last 7 days</button>
+          <div class="agent-heading-controls">
+            <div class="agent-reanalysis-control">
+              <button
+                class="reanalyze-button"
+                type="button"
+                :aria-expanded="reanalysisMenuOpen"
+                @click="reanalysisMenuOpen = !reanalysisMenuOpen"
+              >
+                <svg class="reanalyze-refresh-icon" aria-hidden="true" viewBox="0 0 24 24">
+                  <path d="M20 7v5h-5" />
+                  <path d="M4 17v-5h5" />
+                  <path d="M18.4 10a7 7 0 0 0-12.2-3.2L4 9" />
+                  <path d="M5.6 14a7 7 0 0 0 12.2 3.2L20 15" />
+                </svg>
+                Rerun analysis
+                <svg class="reanalyze-chevron" aria-hidden="true" viewBox="0 0 12 12">
+                  <path d="m3 4.5 3 3 3-3" />
+                </svg>
+              </button>
+              <div v-if="reanalysisMenuOpen" class="agent-reanalysis-menu">
+                <button type="button" @click="runAgentAnalysis('24h')">
+                  <span>Last 24 hours</span><small>Queue recent calls</small>
+                </button>
+                <button type="button" @click="runAgentAnalysis('7d')">
+                  <span>Last 7 days</span><small>Queue the weekly window</small>
+                </button>
+              </div>
+            </div>
+            <label class="search-field calls-search">
+              <span aria-hidden="true">⌕</span>
+              <input v-model="callSearch" type="search" placeholder="Search calls..." />
+            </label>
+            <div class="call-filter-control">
+              <button
+                class="filter-icon-button"
+                type="button"
+                aria-label="Filter calls"
+                :aria-expanded="callFilterOpen"
+                :data-active="callIssueFilter !== 'all'"
+                @click="callFilterOpen = !callFilterOpen"
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24">
+                  <path d="M4 6h16M7 12h10M10 18h4" />
+                </svg>
+                <span v-if="callIssueFilter !== 'all'" class="filter-active-dot"></span>
+              </button>
+              <div v-if="callFilterOpen" class="call-filter-menu">
+                <button type="button" @click="selectCallIssueFilter('all')">All calls</button>
+                <button type="button" @click="selectCallIssueFilter('flagged')">
+                  Has flagged issues
+                </button>
+                <button type="button" @click="selectCallIssueFilter('unflagged')">
+                  No flagged issues
+                </button>
+              </div>
             </div>
           </div>
-        </header>
-        <section class="summary-strip summary-strip-three">
+        </section>
+        <section class="summary-strip">
           <article>
             <span>Calls analyzed</span><strong>{{ agent.summary.callsAnalyzed }}</strong>
           </article>
@@ -510,122 +597,198 @@ function delay(milliseconds: number): Promise<void> {
             ><strong>{{ formatDuration(agent.summary.averageDurationSeconds) }}</strong>
           </article>
           <article>
-            <span>Flagged issues</span><strong>{{ agent.summary.flaggedIssueCount }}</strong>
+            <span>Success-criterion adherence</span
+            ><strong>{{ agentAdherence === null ? '—' : `${agentAdherence}%` }}</strong>
+          </article>
+          <article>
+            <span>Calls requiring review</span
+            ><strong>{{ agent.summary.callsWithFailures }}</strong>
           </article>
         </section>
-        <div class="agent-workspace">
-          <section class="data-panel calls-panel">
-            <header class="compact-panel-header">
-              <div>
+        <div class="agent-analysis-layout">
+          <div class="agent-review-grid">
+            <section class="data-panel calls-panel">
+              <header class="panel-header call-log-header">
                 <h2>Call log</h2>
-                <p v-if="selectedCriterionId">Filtered by selected criterion</p>
-              </div>
-              <label class="mini-search"
-                ><input v-model="callSearch" placeholder="Search calls"
-              /></label>
-            </header>
-            <div class="internal-scroll">
-              <table class="data-table calls-table">
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>Duration</th>
-                    <th>Flagged issues</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr
-                    v-for="item in visibleCalls"
-                    :key="item.id"
-                    @click="navigate({ callId: item.id })"
+                <div>
+                  <button
+                    v-if="selectedCriterion"
+                    class="active-criterion-filter"
+                    type="button"
+                    title="Clear criterion filter"
+                    @click="selectedCriterionId = null"
                   >
-                    <td>
-                      <time>{{ formatDate(item.createdAt) }}</time>
-                    </td>
-                    <td>{{ formatDuration(item.durationSeconds) }}</td>
-                    <td>
-                      <span class="issue-count" :data-active="item.flaggedIssueCount > 0">{{
-                        item.flaggedIssueCount
-                      }}</span>
-                    </td>
-                    <td class="row-chevron">›</td>
-                  </tr>
-                </tbody>
-              </table>
-              <button
-                v-if="agent.nextCallCursor"
-                class="load-more-button"
-                :disabled="loadingMoreCalls"
-                @click="loadMoreCalls"
-              >
-                {{ loadingMoreCalls ? 'Loading…' : 'Load more calls' }}
-              </button>
-            </div>
-          </section>
-          <section class="data-panel criteria-panel">
-            <header class="compact-panel-header">
-              <div>
-                <h2>Success Criteria</h2>
-                <p>Click a criterion to filter calls</p>
+                    {{ selectedCriterion.name }} <span aria-hidden="true">×</span>
+                  </button>
+                  <span>{{ visibleCalls.length }} of {{ agent.totalCallCount }}</span>
+                </div>
+              </header>
+              <div v-if="!visibleCalls.length" class="empty-panel compact">
+                {{
+                  selectedCriterion
+                    ? 'No calls failed this criterion.'
+                    : 'No calls match your search.'
+                }}
               </div>
-            </header>
-            <form class="criterion-form" @submit.prevent="addCriterion">
-              <input v-model="newCriterionName" placeholder="Criterion name" maxlength="96" />
-              <textarea
-                v-model="newCriterionDescription"
-                placeholder="Describe exactly what should happen in a call"
-              /><button
-                class="primary-button"
-                :disabled="
-                  addingCriterion ||
-                  newCriterionName.trim().length < 2 ||
-                  newCriterionDescription.trim().length < 10
-                "
-              >
-                Add
-              </button>
-            </form>
-            <div class="criteria-list internal-scroll">
-              <article
-                v-for="criterion in agent.successCriteria"
-                :key="criterion.id"
-                :data-criterion-id="criterion.id"
-                :data-selected="selectedCriterionId === criterion.id"
-                @click="selectCriterion(criterion.id)"
-              >
-                <div class="criterion-actions">
-                  <button title="Delete criterion" @click.stop="removeCriterion(criterion.id)">
-                    ×
+              <div v-else class="table-scroll calls-scroll">
+                <table class="data-table fleet-table calls-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th class="numeric">Duration</th>
+                      <th class="numeric">Flagged Issues</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      v-for="item in visibleCalls"
+                      :key="item.id"
+                      @click="navigate({ callId: item.id })"
+                    >
+                      <td class="mono">
+                        <time>{{ formatDate(item.createdAt) }}</time>
+                      </td>
+                      <td class="numeric mono">{{ formatDuration(item.durationSeconds) }}</td>
+                      <td class="numeric">{{ item.flaggedIssueCount }}</td>
+                      <td class="row-chevron">›</td>
+                    </tr>
+                  </tbody>
+                  <tfoot v-if="agent.nextCallCursor">
+                    <tr>
+                      <td colspan="4">
+                        <button
+                          class="load-more-calls"
+                          type="button"
+                          :disabled="loadingMoreCalls"
+                          @click.stop="loadMoreCalls"
+                        >
+                          {{ loadingMoreCalls ? 'Loading…' : 'Load older calls' }}
+                        </button>
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </section>
+
+            <section class="data-panel criteria-panel">
+              <header class="panel-header">
+                <h2>Success criteria</h2>
+                <div class="criteria-header-actions">
+                  <span>{{ agent.successCriteria.length }} active</span>
+                  <button
+                    class="criterion-add-toggle"
+                    type="button"
+                    :aria-expanded="criterionComposerOpen"
+                    @click="criterionComposerOpen = !criterionComposerOpen"
+                  >
+                    {{ criterionComposerOpen ? 'Close' : '+ Add criterion' }}
                   </button>
                 </div>
-                <strong>{{ criterion.name }}</strong>
-                <p>{{ criterion.description }}</p>
-                <span class="criterion-failures"
-                  >{{ criterion.resultDistribution.fail }} failed</span
+              </header>
+              <form
+                v-if="criterionComposerOpen"
+                class="criterion-composer"
+                @submit.prevent="addCriterion"
+              >
+                <label class="criterion-name-field">
+                  <span>Criterion name</span>
+                  <input
+                    v-model="newCriterionName"
+                    maxlength="96"
+                    placeholder="Example: Confirm before completion"
+                  />
+                </label>
+                <label>
+                  <span>Describe an observable expectation</span>
+                  <textarea
+                    v-model="newCriterionDescription"
+                    rows="2"
+                    placeholder="Example: Confirm every material request before completing it."
+                  ></textarea>
+                </label>
+                <div class="criterion-composer-actions">
+                  <button
+                    class="secondary-button"
+                    type="button"
+                    @click="criterionComposerOpen = false"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    class="primary-button"
+                    type="submit"
+                    :disabled="
+                      addingCriterion ||
+                      newCriterionName.trim().length < 2 ||
+                      newCriterionDescription.trim().length < 10
+                    "
+                  >
+                    {{ addingCriterion ? 'Adding…' : 'Add criterion' }}
+                  </button>
+                </div>
+              </form>
+              <div class="criterion-list">
+                <article
+                  v-for="criterion in agent.successCriteria"
+                  :key="criterion.id"
+                  :data-selected="selectedCriterionId === criterion.id"
                 >
-                <button
-                  v-if="criterion.resultDistribution.fail > 0"
-                  class="generate-recommendation"
-                  :disabled="
-                    generatingCriterionId === criterion.id ||
-                    ['queued', 'processing'].includes(recommendationStatus(criterion.id) ?? '')
-                  "
-                  @click.stop="requestRecommendation(criterion.id)"
-                >
-                  {{ recommendationButtonLabel(criterion.id) }}
-                </button>
-              </article>
-            </div>
-          </section>
+                  <button
+                    class="criterion-filter-button"
+                    type="button"
+                    :aria-pressed="selectedCriterionId === criterion.id"
+                    :aria-label="'Show calls that failed ' + criterion.name"
+                    @click="selectCriterion(criterion.id)"
+                  >
+                    <div class="criterion-title-row">
+                      <strong>{{ criterion.name }}</strong>
+                    </div>
+                    <p>{{ criterion.description }}</p>
+                    <div class="criterion-card-footer">
+                      <span
+                        class="criterion-failure-count"
+                        :data-active="criterion.resultDistribution.fail > 0"
+                        >{{ criterion.resultDistribution.fail }} failed</span
+                      >
+                    </div>
+                  </button>
+                  <button
+                    v-if="criterion.resultDistribution.fail > 0"
+                    class="criterion-guidance-button"
+                    type="button"
+                    :disabled="
+                      generatingCriterionId === criterion.id ||
+                      ['queued', 'processing'].includes(recommendationStatus(criterion.id) ?? '')
+                    "
+                    @click.stop="requestRecommendation(criterion.id)"
+                  >
+                    {{ recommendationButtonLabel(criterion.id) }}
+                  </button>
+                  <button
+                    class="criterion-delete-button"
+                    type="button"
+                    aria-label="Delete criterion"
+                    title="Delete criterion"
+                    @click="removeCriterion(criterion.id)"
+                  >
+                    ×
+                  </button>
+                </article>
+              </div>
+            </section>
+          </div>
+
+          <RecommendationPanel
+            class="agent-recommendations-panel"
+            scope="agent"
+            :recommendations="agent.recommendations"
+            :analyzed-call-count="agent.summary.callsAnalyzed"
+            @copy="copyRecommendation"
+            @remove="removeRecommendation"
+          />
         </div>
-        <RecommendationPanel
-          class="agent-recommendations"
-          :recommendations="agent.recommendations"
-          :analyzed-call-count="agent.summary.callsAnalyzed"
-          @copy="copyRecommendation"
-          @remove="removeRecommendation"
-        />
       </template>
 
       <template v-else-if="call">
@@ -638,7 +801,7 @@ function delay(milliseconds: number): Promise<void> {
         <div class="reference-call-layout">
           <div class="call-primary-column">
             <section class="data-panel call-transcript-reference">
-              <header class="compact-panel-header transcript-reference-header">
+              <header class="panel-header transcript-reference-header">
                 <h1>Transcript Forensic View</h1>
                 <div class="call-header-badges">
                   <span>Duration: {{ formatDuration(call.call.durationSeconds) }}</span>

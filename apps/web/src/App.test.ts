@@ -86,10 +86,28 @@ describe('DashboardView', () => {
   });
 
   it('renders the voice-agent fleet', async () => {
+    api.getObservabilityDashboard.mockResolvedValue({
+      agents: [
+        {
+          id: agentAnalysis.agent.id,
+          name: agentAnalysis.agent.name,
+          lifecycleState: 'active',
+          analysisStatus: 'completed',
+          summary: agentAnalysis.summary,
+        },
+      ],
+    });
     const { wrapper } = await mountView('/');
     expect(wrapper.text()).toContain('Voice AI Observability Copilot');
+    expect(wrapper.text()).toContain(
+      'Review agent performance and open the calls that need a decision.',
+    );
     expect(wrapper.text()).toContain('Agent name');
-    expect(wrapper.text()).toContain('Flagged issues');
+    expect(wrapper.text()).toContain('Script adherence');
+    expect(wrapper.text()).toContain('Flagged Issues');
+    expect(wrapper.get('input[type="search"]').attributes('placeholder')).toBe(
+      'Search agents by name…',
+    );
   });
 
   it('keeps the call page focused on checklist evidence', async () => {
@@ -166,15 +184,17 @@ describe('DashboardView', () => {
       '/?locationId=test&agentId=d72b07d3-d8d5-45c4-a7b5-5cc2e47db17c',
     );
 
-    const workspace = wrapper.get('.agent-workspace');
-    expect(workspace.find('.calls-panel').exists()).toBe(true);
-    expect(workspace.find('.criteria-panel').exists()).toBe(true);
-    expect(wrapper.get('.agent-recommendations').text()).toContain('AI recommendations');
-    expect(wrapper.get('.agent-recommendations').text()).toContain(
-      'Patterns across 8 analyzed calls',
+    const workspace = wrapper.get('.agent-analysis-layout');
+    expect(workspace.find('.agent-review-grid .calls-panel').exists()).toBe(true);
+    expect(workspace.find('.agent-review-grid .criteria-panel').exists()).toBe(true);
+    expect(wrapper.get('.summary-strip').findAll('article')).toHaveLength(4);
+    expect(wrapper.find('.filter-icon-button').exists()).toBe(true);
+    expect(wrapper.get('.agent-recommendations-panel').text()).toContain('AI recommendations');
+    expect(wrapper.get('.agent-recommendations-panel').text()).toContain(
+      'Aggregated from 8 analyzed calls',
     );
     expect(wrapper.find('button[title="Edit criterion"]').exists()).toBe(false);
-    expect(wrapper.get('.generate-recommendation').text()).toContain('Generate prompt guidance');
+    expect(wrapper.get('.criterion-guidance-button').text()).toContain('Generate prompt guidance');
   });
 
   it('highlights an executed Call Action cited by a failed criterion', async () => {
