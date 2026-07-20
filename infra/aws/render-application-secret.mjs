@@ -22,8 +22,8 @@ if (provider === 'openai-compatible' && !process.env.LLM_API_KEY) {
 }
 
 const sharedSecret =
-  process.env.HIGHLEVEL_APP_SHARED_SECRET ??
-  process.env.EXISTING_HIGHLEVEL_APP_SHARED_SECRET ??
+  process.env.HIGHLEVEL_APP_SHARED_SECRET ||
+  process.env.EXISTING_HIGHLEVEL_APP_SHARED_SECRET ||
   randomBytes(32).toString('hex');
 
 const configuration = {
