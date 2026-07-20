@@ -345,7 +345,9 @@ Resources:
         Fn::Base64: |
           #!/bin/bash
           set -euo pipefail
-          dnf install -y docker jq python3 curl
+          # Amazon Linux 2023 already provides curl-minimal. Installing the full
+          # curl package alongside it makes dnf abort the entire transaction.
+          dnf install -y docker jq python3
           systemctl enable --now docker
           COMPOSE_VERSION=v2.40.3
           COMPOSE_DIR=/usr/local/lib/docker/cli-plugins
