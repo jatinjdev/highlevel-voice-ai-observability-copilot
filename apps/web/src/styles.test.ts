@@ -15,4 +15,9 @@ describe('established observability layout', () => {
     expect(styles).toMatch(/\.recommendation-card > p\s*\{[^}]*font-size:\s*8px;/s);
     expect(styles).toMatch(/\.copy-block code\s*\{[^}]*font-size:\s*8px;/s);
   });
+
+  it('does not collapse the desktop workspace inside the HighLevel iframe', () => {
+    expect(styles).toContain('@media (max-width: 640px)');
+    expect(styles).not.toContain('@media (max-width: 900px)');
+  });
 });
