@@ -1,6 +1,6 @@
 # AWS deployment runbook
 
-The assignment uses a deliberately small AWS deployment:
+The application uses a deliberately small AWS deployment:
 
 - CloudFront and a private S3 bucket serve the Vue dashboard;
 - an ALB routes `/api/*` to one EC2 instance;
@@ -65,9 +65,8 @@ deployment does not build or push an image. The host refreshes the environment
 files and asks Compose to recreate only `api`, `ingestion`, `analysis`, or all
 three containers.
 
-The deployment rejects the interactive `opencode` adapter in production. Use an
-unattended OpenAI-compatible provider credential or explicitly set the provider
-to `none` for an infrastructure-only smoke test.
+Use an unattended OpenAI-compatible provider credential, or set the provider to
+`none` for an infrastructure-only smoke test.
 
 ## Frontend caching
 

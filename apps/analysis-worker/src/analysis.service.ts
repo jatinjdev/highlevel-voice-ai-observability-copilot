@@ -1,7 +1,5 @@
 import type { CallAnalysisRequestedEvent } from '@copilot/contracts';
 import {
-  analysisBatchItems,
-  analysisBatches,
   callActionEvents,
   callAnalysisRuns,
   callTurns,
@@ -19,15 +17,18 @@ import { createHash, randomUUID } from 'node:crypto';
 import { CallAnalyzer } from './call-analyzer';
 import { CriteriaService } from './criteria.service';
 import { WorkerDatabaseService } from './database.service';
-import type { CallEvaluationInput, CriterionEvaluation } from './evaluation.types';
+import type { CallAnalysis, CallEvaluationInput } from './evaluation.types';
 
 const CONSUMER_NAME = 'analysis-worker-v5';
 const EVALUATOR_VERSION = 'criteria-checklist-v2';
 const ANALYSIS_LEASE_MS = 5 * 60_000;
+// This mirrors the AnalysisQueue redrive policy: the fifth failed receive is terminal.
+export const MAX_ANALYSIS_ATTEMPTS = 5;
 
 interface AnalysisClaim {
   analysisId: string;
   leaseToken: string;
+  attemptCount: number;
 }
 
 @Injectable()
@@ -81,7 +82,7 @@ export class AnalysisService {
       await this.complete(event, claim, input, evaluation);
       return 'processed';
     } catch (error) {
-      await this.fail(event, claim.analysisId, claim.leaseToken, error);
+      await this.recordFailure(claim, error);
       throw error;
     }
   }
@@ -194,18 +195,19 @@ export class AnalysisService {
       if (!analysisId) throw new Error('Analysis claim could not create a run.');
 
       const leaseToken = randomUUID();
+      const attemptCount = (existing?.attemptCount ?? 0) + 1;
       await transaction
         .update(callAnalysisRuns)
         .set({
           status: 'processing',
           leaseToken,
           leasedUntil: new Date(Date.now() + ANALYSIS_LEASE_MS),
-          attemptCount: (existing?.attemptCount ?? 0) + 1,
+          attemptCount,
           lastError: null,
           startedAt: new Date(),
         })
         .where(eq(callAnalysisRuns.id, analysisId));
-      return { analysisId, leaseToken };
+      return { analysisId, leaseToken, attemptCount };
     });
   }
 
@@ -213,7 +215,7 @@ export class AnalysisService {
     event: CallAnalysisRequestedEvent,
     claim: AnalysisClaim,
     input: CallEvaluationInput,
-    evaluation: CriterionEvaluation,
+    evaluation: CallAnalysis,
   ): Promise<void> {
     await this.databaseService.client.transaction(async (transaction) => {
       await transaction
@@ -286,25 +288,6 @@ export class AnalysisService {
         }
       }
 
-      if (event.data.batchId) {
-        await transaction
-          .update(analysisBatchItems)
-          .set({
-            status: 'completed',
-            analysisRunId: claim.analysisId,
-            lastError: null,
-            completedAt: new Date(),
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(analysisBatchItems.batchId, event.data.batchId),
-              eq(analysisBatchItems.callId, input.callId),
-            ),
-          );
-        await refreshBatch(transaction, event.data.batchId);
-      }
-
       await transaction
         .insert(processedMessages)
         .values({ consumerName: CONSUMER_NAME, messageId: event.messageId })
@@ -314,68 +297,31 @@ export class AnalysisService {
     });
   }
 
-  private async fail(
-    event: CallAnalysisRequestedEvent,
-    analysisId: string,
-    leaseToken: string,
-    error: unknown,
-  ): Promise<void> {
+  private async recordFailure(claim: AnalysisClaim, error: unknown): Promise<void> {
     const message = error instanceof Error ? error.message : 'Unknown analysis failure.';
+    const status = analysisStatusAfterFailure(claim.attemptCount);
     await this.databaseService.client.transaction(async (transaction) => {
       await transaction
         .update(callAnalysisRuns)
         .set({
-          status: 'failed',
+          status,
           isCurrent: false,
           leaseToken: null,
-          leasedUntil: null,
+          ...(status === 'failed' ? { leasedUntil: null } : {}),
           lastError: message.slice(0, 2_000),
-        })
-        .where(
-          and(eq(callAnalysisRuns.id, analysisId), eq(callAnalysisRuns.leaseToken, leaseToken)),
-        );
-      if (!event.data.batchId) return;
-      await transaction
-        .update(analysisBatchItems)
-        .set({
-          status: 'failed',
-          analysisRunId: analysisId,
-          lastError: message.slice(0, 2_000),
-          completedAt: new Date(),
-          updatedAt: new Date(),
         })
         .where(
           and(
-            eq(analysisBatchItems.batchId, event.data.batchId),
-            eq(analysisBatchItems.callId, event.data.callId),
+            eq(callAnalysisRuns.id, claim.analysisId),
+            eq(callAnalysisRuns.leaseToken, claim.leaseToken),
           ),
         );
-      await refreshBatch(transaction, event.data.batchId);
     });
   }
 }
 
-async function refreshBatch(
-  transaction: WorkerDatabaseService['client'],
-  batchId: string,
-): Promise<void> {
-  const items = await transaction
-    .select({ status: analysisBatchItems.status })
-    .from(analysisBatchItems)
-    .where(eq(analysisBatchItems.batchId, batchId));
-  const completedCount = items.filter(({ status }) => status === 'completed').length;
-  const failedCount = items.filter(({ status }) => status === 'failed').length;
-  const isFinished = completedCount + failedCount === items.length;
-  await transaction
-    .update(analysisBatches)
-    .set({
-      status: isFinished ? (failedCount ? 'partial_failed' : 'completed') : 'processing',
-      completedCount,
-      failedCount,
-      completedAt: isFinished ? new Date() : null,
-      updatedAt: new Date(),
-    })
-    .where(eq(analysisBatches.id, batchId));
+export function analysisStatusAfterFailure(attemptCount: number): 'processing' | 'failed' {
+  return attemptCount >= MAX_ANALYSIS_ATTEMPTS ? 'failed' : 'processing';
 }
 
 function fingerprint(value: unknown): string {
@@ -383,8 +329,7 @@ function fingerprint(value: unknown): string {
 }
 
 function executionKeyFor(event: CallAnalysisRequestedEvent, inputFingerprint: string): string {
-  if (event.data.runReason !== 'manual' && event.data.runReason !== 'backtest')
-    return inputFingerprint;
+  if (event.data.runReason !== 'manual') return inputFingerprint;
   return fingerprint({ inputFingerprint, forceRunKey: event.data.requestKey ?? event.messageId });
 }
 

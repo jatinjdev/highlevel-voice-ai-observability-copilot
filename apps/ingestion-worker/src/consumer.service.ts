@@ -49,12 +49,6 @@ export class IngestionConsumerService implements OnApplicationBootstrap, OnAppli
       const { event } = delivery;
       if (event.type === 'call.ingestion.requested') {
         await this.ingestionService.ingestCall(event);
-      } else if (
-        event.type === 'marketplace.installation.installed' ||
-        event.type === 'marketplace.installation.updated' ||
-        event.type === 'marketplace.installation.uninstalled'
-      ) {
-        await this.ingestionService.recordLifecycle(event);
       } else {
         throw new Error(`Ingestion worker cannot handle event ${event.type}.`);
       }

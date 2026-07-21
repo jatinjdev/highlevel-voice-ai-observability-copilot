@@ -24,25 +24,38 @@ export const callSentimentLabelSchema = z.enum([
 ]);
 
 export const callOverviewSchema = z.object({
-  intent: z.string().min(1).max(160),
+  intent: z.string().min(1),
   outcome: callOutcomeSchema,
   sentiment: z.object({
     label: callSentimentLabelSchema,
-    rationale: z.string().min(1).max(500),
+    rationale: z.string().min(1),
   }),
 });
 
 export const modelCriterionEvaluationSchema = z.object({
-  overview: callOverviewSchema,
-  criterionResults: z.array(
-    z.object({
-      criterionId: z.string().regex(/^C\d{2,}$/),
-      result: criterionEvaluationStatusSchema,
-      rationale: z.string().min(1),
-      evidenceTurnIds: z.array(z.string().regex(/^T\d{2,}$/)),
-      evidenceActionIds: z.array(z.string().regex(/^A\d{2,}$/)),
-    }),
-  ),
+  criterionResults: z
+    .array(
+      z.object({
+        criterionId: z
+          .string()
+          .regex(/^C\d{2,}$/)
+          .describe('The supplied criterion alias, for example C01.'),
+        result: criterionEvaluationStatusSchema.describe(
+          'The checklist verdict chosen using the evaluator decision procedure.',
+        ),
+        rationale: z
+          .string()
+          .min(1)
+          .describe('One sentence explaining the verdict from the cited call evidence.'),
+        evidenceTurnIds: z
+          .array(z.string().regex(/^T\d{2,}$/))
+          .describe('Supplied transcript aliases that directly support the verdict.'),
+        evidenceActionIds: z
+          .array(z.string().regex(/^A\d{2,}$/))
+          .describe('Supplied action-event aliases that directly support the verdict.'),
+      }),
+    )
+    .describe('Exactly one independent result for every supplied criterion.'),
 });
 
 export type CriterionEvaluationStatus = z.infer<typeof criterionEvaluationStatusSchema>;
@@ -88,6 +101,9 @@ export interface CriterionResult {
 }
 
 export interface CriterionEvaluation {
-  overview: CallOverview;
   criterionResults: CriterionResult[];
+}
+
+export interface CallAnalysis extends CriterionEvaluation {
+  overview: CallOverview;
 }

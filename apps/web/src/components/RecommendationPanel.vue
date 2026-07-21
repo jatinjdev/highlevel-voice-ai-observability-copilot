@@ -6,12 +6,14 @@ withDefaults(
     recommendations: Recommendation[];
     scope?: 'agent' | 'call';
     analyzedCallCount?: number | null;
+    generationPending?: boolean;
   }>(),
-  { scope: 'agent', analyzedCallCount: null },
+  { scope: 'agent', analyzedCallCount: null, generationPending: false },
 );
 
 const emit = defineEmits<{
   copy: [recommendation: Recommendation];
+  generate: [];
   remove: [recommendation: Recommendation];
 }>();
 
@@ -31,10 +33,22 @@ function supportingCallLabel(recommendation: Recommendation): string {
           {{ analyzedCallCount === 1 ? 'call' : 'calls' }}
         </span>
       </div>
-      <span v-if="recommendations.length">{{ recommendations.length }}</span>
+      <div class="recommendation-panel-actions">
+        <span v-if="recommendations.length">{{ recommendations.length }}</span>
+        <button
+          class="recommendation-generate-button"
+          type="button"
+          :disabled="generationPending"
+          @click="emit('generate')"
+        >
+          {{
+            generationPending ? 'Generating…' : recommendations.length ? 'Regenerate' : 'Generate'
+          }}
+        </button>
+      </div>
     </header>
 
-    <div v-if="recommendations.length" class="recommendation-cards">
+    <div v-if="recommendations.length" class="recommendation-list">
       <article
         v-for="recommendation in recommendations"
         :key="recommendation.id"
@@ -42,7 +56,7 @@ function supportingCallLabel(recommendation: Recommendation): string {
         :data-recommendation-criterion-id="recommendation.criterionId"
       >
         <div class="recommendation-card-context">
-          <span class="recommendation-type">Prompt</span>
+          <span class="recommendation-type">{{ recommendation.capabilityLabel }}</span>
           <span class="recommendation-call-support">{{ supportingCallLabel(recommendation) }}</span>
         </div>
         <button
@@ -57,7 +71,14 @@ function supportingCallLabel(recommendation: Recommendation): string {
         <h3>{{ recommendation.headline }}</h3>
         <p :title="recommendation.explanation">{{ recommendation.explanation }}</p>
 
-        <div class="recommendation-copy-block">
+        <div v-if="recommendation.promptRemovals.length" class="recommendation-remove-block">
+          <span>Remove from your agent prompt</span>
+          <blockquote v-for="removal in recommendation.promptRemovals" :key="removal">
+            {{ removal }}
+          </blockquote>
+        </div>
+
+        <div v-if="recommendation.promptAddition" class="recommendation-copy-block">
           <span>Paste this into your agent prompt</span>
           <button
             type="button"
@@ -74,11 +95,17 @@ function supportingCallLabel(recommendation: Recommendation): string {
           </button>
           <blockquote>{{ recommendation.promptAddition }}</blockquote>
         </div>
+
+        <div
+          v-if="!recommendation.promptRemovals.length && !recommendation.promptAddition"
+          class="recommendation-setting-block"
+        >
+          <span>{{ recommendation.uiPath }}</span>
+          <p>{{ recommendation.advice }}</p>
+        </div>
       </article>
     </div>
 
-    <div v-else class="recommendation-empty-state">
-      No recommendation is justified by the analyzed calls.
-    </div>
+    <div v-else class="recommendation-empty-state">No generated recommendations.</div>
   </section>
 </template>

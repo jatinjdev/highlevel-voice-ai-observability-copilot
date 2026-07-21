@@ -133,6 +133,19 @@ ol {
   background: var(--red-soft);
   font-size: 12px;
 }
+.toast {
+  position: fixed;
+  z-index: 100;
+  right: 20px;
+  bottom: 20px;
+  padding: 11px 14px;
+  border: 1px solid #bcb7ef;
+  border-radius: 7px;
+  color: #2f249a;
+  background: #f3f1ff;
+  box-shadow: 0 12px 32px rgb(22 35 56 / 16%);
+  font-size: 11px;
+}
 .loading-panel,
 .empty-panel {
   padding: 42px 24px;
@@ -441,7 +454,12 @@ ol {
   font-weight: 550;
   white-space: nowrap;
 }
-.recommendation-panel-header > span {
+.recommendation-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.recommendation-panel-actions > span {
   display: grid;
   min-width: 20px;
   height: 20px;
@@ -452,25 +470,36 @@ ol {
   font-size: 8px;
   font-weight: 700;
 }
-.recommendation-cards {
-  display: grid;
-  grid-auto-columns: minmax(330px, 50%);
-  grid-auto-flow: column;
+.recommendation-generate-button {
+  min-height: 24px;
+  padding: 4px 10px;
+  border: 1px solid #bcb7ef;
+  border-radius: 5px;
+  color: #2f249a;
+  background: #fff;
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 700;
+}
+.recommendation-generate-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.recommendation-list {
+  display: flex;
   min-height: 0;
   flex: 1;
-  overflow-x: auto;
-  overflow-y: hidden;
+  flex-direction: column;
+  overflow-y: auto;
   scrollbar-color: #aaa5de transparent;
   scrollbar-width: thin;
 }
 .recommendation-panel .recommendation-card {
   display: flex;
-  min-height: 0;
+  flex: 0 0 auto;
   flex-direction: column;
-  overflow-y: auto;
   padding: 11px 13px 12px;
-  border-right: 1px solid var(--line);
-  scrollbar-width: thin;
+  border-bottom: 1px solid var(--line);
 }
 .recommendation-panel .recommendation-card[data-has-evidence='true'] {
   cursor: pointer;
@@ -530,6 +559,47 @@ ol {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
+.recommendation-remove-block,
+.recommendation-setting-block {
+  margin-top: 8px;
+  padding: 8px 10px;
+}
+.recommendation-remove-block {
+  border-left: 2px solid #c62828;
+  background: #fff1f0;
+}
+.recommendation-remove-block > span,
+.recommendation-setting-block > span {
+  display: block;
+  font-size: 7px;
+  font-weight: 750;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+.recommendation-remove-block > span {
+  color: #a61b1b;
+}
+.recommendation-remove-block blockquote {
+  margin-top: 4px;
+  color: #6d2020;
+  font-size: 8px;
+  line-height: 1.4;
+  text-decoration: line-through;
+  text-decoration-color: rgb(198 40 40 / 55%);
+}
+.recommendation-setting-block {
+  border-left: 2px solid var(--primary);
+  background: #f4f3ff;
+}
+.recommendation-setting-block > span {
+  color: var(--primary);
+}
+.recommendation-setting-block > p {
+  margin-top: 4px;
+  color: #303a52;
+  font-size: 8px;
+  line-height: 1.4;
+}
 .recommendation-copy-block {
   position: relative;
   min-height: 0;
@@ -585,6 +655,24 @@ ol {
   line-height: 1.4;
 }
 
+.recommendation-panel[data-scope='agent'] .recommendation-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+}
+.recommendation-panel[data-scope='agent'] .recommendation-card:nth-child(odd) {
+  border-right: 1px solid var(--line);
+}
+
+@media (max-width: 640px) {
+  .recommendation-panel[data-scope='agent'] .recommendation-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .recommendation-panel[data-scope='agent'] .recommendation-card:nth-child(odd) {
+    border-right: 0;
+  }
+}
+
 .criteria-panel,
 .calls-panel,
 .lower-panel {
@@ -624,11 +712,11 @@ ol {
   align-items: center;
   gap: 8px;
 }
-.agent-reanalysis-control {
+.agent-analysis-control {
   position: relative;
   flex: 0 0 auto;
 }
-.reanalyze-button {
+.analyze-button {
   display: flex;
   min-height: 40px;
   align-items: center;
@@ -644,16 +732,16 @@ ol {
   font-weight: 700;
   white-space: nowrap;
 }
-.reanalyze-button:hover,
-.reanalyze-button[aria-expanded='true'] {
+.analyze-button:hover,
+.analyze-button[aria-expanded='true'] {
   border-color: #afa9eb;
   background: var(--primary-soft);
 }
-.reanalyze-button:disabled {
+.analyze-button:disabled {
   cursor: default;
   opacity: 0.6;
 }
-.reanalyze-refresh-icon {
+.analyze-refresh-icon {
   width: 15px;
   height: 15px;
   flex: 0 0 auto;
@@ -663,7 +751,7 @@ ol {
   stroke-linejoin: round;
   stroke-width: 1.8;
 }
-.reanalyze-button .reanalyze-chevron {
+.analyze-button .analyze-chevron {
   width: 12px;
   height: 12px;
   margin-left: 1px;
@@ -673,7 +761,7 @@ ol {
   stroke-linejoin: round;
   stroke-width: 1.5;
 }
-.agent-reanalysis-menu {
+.agent-analysis-menu {
   position: absolute;
   z-index: 12;
   top: calc(100% + 7px);
@@ -686,7 +774,7 @@ ol {
   background: #fff;
   box-shadow: 0 10px 28px rgb(22 35 56 / 14%);
 }
-.agent-reanalysis-menu button {
+.agent-analysis-menu button {
   display: grid;
   gap: 3px;
   padding: 8px 9px;
@@ -698,28 +786,13 @@ ol {
   font-size: 10px;
   text-align: left;
 }
-.agent-reanalysis-menu button:hover {
+.agent-analysis-menu button:hover {
   color: var(--primary);
   background: var(--primary-soft);
 }
-.agent-reanalysis-menu small {
+.agent-analysis-menu small {
   color: var(--subtle);
   font-size: 8px;
-}
-.reanalysis-notice {
-  position: fixed;
-  z-index: 80;
-  right: 18px;
-  bottom: 18px;
-  max-width: min(360px, calc(100vw - 36px));
-  padding: 10px 13px;
-  border: 1px solid #b9b3ef;
-  border-radius: 7px;
-  color: #2f249a;
-  background: #f3f1ff;
-  box-shadow: 0 12px 32px rgb(22 35 56 / 16%);
-  font-size: 10px;
-  font-weight: 650;
 }
 .calls-search {
   width: min(320px, 100%);
@@ -885,6 +958,32 @@ ol {
   color: inherit;
   font: inherit;
   white-space: nowrap;
+}
+.call-date-part::after {
+  content: ',\00a0';
+}
+.flagged-issues-heading {
+  white-space: nowrap;
+}
+.call-analysis-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: #655d48;
+  background: #fff5cf;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.call-analysis-status[data-status='processing'] {
+  color: #3430a3;
+  background: #eeecff;
+}
+.call-analysis-status[data-status='failed'] {
+  color: #b42318;
+  background: #feeceb;
 }
 .app-shell[data-view='agent'] .calls-table .row-chevron {
   width: 64px;
@@ -1369,12 +1468,12 @@ ol {
 }
 .active-criterion-filter {
   display: flex;
-  max-width: min(340px, 65%);
+  max-width: min(460px, calc(100% - 64px));
+  min-width: 0;
   min-height: 26px;
   align-items: center;
-  gap: 6px;
   overflow: hidden;
-  padding: 0 8px;
+  padding: 0 11px;
   border: 1px solid #c9c4fa;
   border-radius: 999px;
   color: var(--primary);
@@ -1382,12 +1481,35 @@ ol {
   cursor: pointer;
   font-size: 8px;
   font-weight: 600;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.active-criterion-filter span {
+.active-criterion-filter-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.active-criterion-filter-dismiss {
+  display: grid;
+  width: 0;
   flex: 0 0 auto;
+  place-items: center;
+  overflow: hidden;
+  margin-left: 0;
   font-size: 13px;
+  opacity: 0;
+  transform: translateX(4px);
+  transition:
+    width 120ms ease,
+    margin-left 120ms ease,
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+.active-criterion-filter:hover .active-criterion-filter-dismiss,
+.active-criterion-filter:focus-visible .active-criterion-filter-dismiss {
+  width: 14px;
+  margin-left: 7px;
+  opacity: 1;
+  transform: translateX(0);
 }
 .criteria-header-actions {
   display: flex;
@@ -1666,6 +1788,33 @@ ol {
   border-radius: 0;
   box-shadow: none;
 }
+.call-analysis-notice {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 18px;
+  border-bottom: 1px solid #e5dfc6;
+  color: #655d48;
+  background: #fffaf0;
+  font-size: 10px;
+  line-height: 1.35;
+}
+.call-analysis-notice strong {
+  flex: 0 0 auto;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.call-analysis-notice[data-status='processing'] {
+  border-color: #dcd8ff;
+  color: #3430a3;
+  background: #f7f6ff;
+}
+.call-analysis-notice[data-status='failed'] {
+  border-color: #f4c7c3;
+  color: #b42318;
+  background: #fff5f4;
+}
 .call-transcript-reference,
 .call-guidance-reference {
   display: flex;
@@ -1704,15 +1853,20 @@ ol {
   font-weight: 700;
   line-height: 1;
 }
-.call-header-badges > span[data-review='true'] {
+.call-header-badges > span[data-review='flagged'] {
   border-color: #ffaaa4;
   color: #ad1417;
   background: #ffe1df;
 }
-.call-header-badges > span[data-review='false'] {
+.call-header-badges > span[data-review='clear'] {
   border-color: #aad8c4;
   color: #08724f;
   background: #e9f8f0;
+}
+.call-header-badges > span[data-review='pending'] {
+  border-color: #d5d8e2;
+  color: #687083;
+  background: #f1f3f7;
 }
 .call-header-badges > button {
   cursor: pointer;
@@ -1733,15 +1887,6 @@ ol {
   overflow-y: auto;
   padding: 8px 22px 12px 24px;
 }
-.reference-transcript-list::before {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 39px;
-  width: 1px;
-  background: #d7d9e5;
-  content: '';
-}
 .reference-transcript-turn {
   position: relative;
   z-index: 1;
@@ -1752,7 +1897,17 @@ ol {
   padding: 10px 0;
   scroll-margin-top: 24px;
 }
+.reference-transcript-turn:not(:last-child)::before {
+  position: absolute;
+  top: 25px;
+  bottom: -25px;
+  left: 15px;
+  width: 1px;
+  background: #d7d9e5;
+  content: '';
+}
 .reference-speaker-icon {
+  position: relative;
   display: grid;
   width: 30px;
   height: 30px;
@@ -1767,6 +1922,15 @@ ol {
 .reference-transcript-turn[data-speaker='customer'] .reference-speaker-icon {
   color: #43506a;
   background: #dfeaff;
+}
+.customer-user-icon {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
 }
 .reference-turn-copy {
   min-width: 0;
@@ -1949,6 +2113,13 @@ ol {
   font-size: 9px;
   line-height: 1.4;
 }
+.criterion-evaluation-state {
+  display: block;
+  margin-top: 5px;
+  color: var(--subtle);
+  font-size: 8px;
+  font-weight: 650;
+}
 .checklist-reference .checklist button {
   color: #3829e0;
   font-size: 9px;
@@ -2117,7 +2288,7 @@ ol {
     width: 100%;
     flex-wrap: wrap;
   }
-  .agent-reanalysis-control {
+  .agent-analysis-control {
     order: 2;
   }
   .calls-search {
@@ -2125,11 +2296,27 @@ ol {
     flex: 1;
   }
   .app-shell[data-view='agent'] .agent-review-grid {
-    grid-template-columns: 1fr;
-    grid-template-rows: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    gap: 8px;
   }
-  .recommendation-cards {
-    grid-auto-columns: minmax(285px, 90%);
+  .app-shell[data-view='agent'] .calls-table time {
+    display: grid;
+    gap: 2px;
+    line-height: 1.15;
+    white-space: normal;
+  }
+  .app-shell[data-view='agent'] .calls-table .call-date-part::after {
+    content: '';
+  }
+  .app-shell[data-view='agent'] .calls-table .flagged-issues-heading {
+    display: inline-grid;
+    gap: 2px;
+    line-height: 1.15;
+    white-space: normal;
+  }
+  .app-shell[data-view='agent'] .calls-table th {
+    height: 46px;
   }
   .call-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2220,9 +2407,6 @@ ol {
     padding-right: 16px;
     padding-left: 16px;
   }
-  .reference-transcript-list::before {
-    left: 32px;
-  }
   .call-reference-rail {
     width: 52px;
     padding: 10px 6px;
@@ -2257,28 +2441,6 @@ ol {
 .app-shell[data-view='agent'] .criterion-composer input:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgb(53 37 205 / 9%);
-}
-.criterion-guidance-button {
-  position: absolute;
-  z-index: 2;
-  bottom: 9px;
-  left: 14px;
-  max-width: calc(100% - 105px);
-  overflow: hidden;
-  padding: 4px 7px;
-  border: 0;
-  border-radius: 5px;
-  color: var(--primary);
-  background: var(--primary-soft);
-  cursor: pointer;
-  font-size: 8px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.criterion-guidance-button:disabled {
-  cursor: default;
-  opacity: 0.55;
 }
 .recommendation-panel .recommendation-card {
   position: relative;

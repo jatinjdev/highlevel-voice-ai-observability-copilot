@@ -4,7 +4,11 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { resolve } from 'node:path';
 
 import { AnalysisService } from './analysis.service';
-import { CallAnalyzer, CRITERION_EVALUATOR } from './call-analyzer';
+import { CALL_OVERVIEW_GENERATOR, CallAnalyzer, CRITERION_EVALUATOR } from './call-analyzer';
+import {
+  DisabledCallOverviewGenerator,
+  ModelCallOverviewGenerator,
+} from './call-overview-generator';
 import { ANALYSIS_EVENT_CONSUMER, AnalysisConsumerService } from './consumer.service';
 import { CriteriaService } from './criteria.service';
 import { DisabledCriterionEvaluator, ModelCriterionEvaluator } from './criterion-evaluator';
@@ -12,7 +16,6 @@ import { WorkerDatabaseService } from './database.service';
 import { validateWorkerEnvironment, type WorkerEnvironment } from './environment';
 import { LANGUAGE_MODEL, type StructuredOutputLanguageModel } from './language-model';
 import { OpenAiCompatibleLanguageModel } from './providers/openai-compatible-language-model';
-import { OpenCodeLanguageModel } from './providers/opencode-language-model';
 import { RecommendationGenerator } from './recommendation-generator';
 import { RecommendationService } from './recommendation.service';
 
@@ -36,18 +39,6 @@ import { RecommendationService } from './recommendation.service';
       useFactory: (configService: ConfigService<WorkerEnvironment, true>) => {
         const provider = configService.get('LLM_PROVIDER', { infer: true });
         if (provider === 'none') return null;
-        if (provider === 'opencode') {
-          return new OpenCodeLanguageModel({
-            baseUrl: configService.get('OPENCODE_BASE_URL', { infer: true }),
-            providerId: configService.get('LLM_PROVIDER_ID', { infer: true }),
-            model: configService.get('LLM_MODEL', { infer: true }),
-            serverUsername: configService.get('OPENCODE_SERVER_USERNAME', { infer: true }),
-            serverPassword: configService.get('OPENCODE_SERVER_PASSWORD', { infer: true }),
-            requestTimeoutMs: configService.get('OPENCODE_REQUEST_TIMEOUT_MS', {
-              infer: true,
-            }),
-          });
-        }
         return new OpenAiCompatibleLanguageModel({
           apiKey: configService.get('LLM_API_KEY', { infer: true }),
           baseUrl: configService.get('LLM_BASE_URL', { infer: true }),
@@ -57,6 +48,7 @@ import { RecommendationService } from './recommendation.service';
             infer: true,
           }),
           maxOutputTokens: configService.get('LLM_MAX_OUTPUT_TOKENS', { infer: true }),
+          temperature: configService.get('LLM_TEMPERATURE', { infer: true }),
           requestTimeoutMs: configService.get('LLM_REQUEST_TIMEOUT_MS', { infer: true }),
           extraBody: configService.get('LLM_EXTRA_BODY_JSON', { infer: true }),
         });
@@ -69,6 +61,14 @@ import { RecommendationService } from './recommendation.service';
         languageModel
           ? new ModelCriterionEvaluator(languageModel)
           : new DisabledCriterionEvaluator(),
+    },
+    {
+      provide: CALL_OVERVIEW_GENERATOR,
+      inject: [LANGUAGE_MODEL],
+      useFactory: (languageModel: StructuredOutputLanguageModel | null) =>
+        languageModel
+          ? new ModelCallOverviewGenerator(languageModel)
+          : new DisabledCallOverviewGenerator(),
     },
     RecommendationGenerator,
     RecommendationService,

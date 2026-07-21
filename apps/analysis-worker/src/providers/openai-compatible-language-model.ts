@@ -13,6 +13,7 @@ export interface OpenAiCompatibleLanguageModelOptions {
   providerId: string;
   structuredOutputMode: StructuredOutputMode;
   maxOutputTokens: number;
+  temperature?: number;
   requestTimeoutMs: number;
   extraBody?: Record<string, unknown>;
 }
@@ -82,22 +83,44 @@ export class OpenAiCompatibleLanguageModel implements StructuredOutputLanguageMo
       messages: buildMessages(request, responseFormat.json_schema.schema),
       response_format: { type: 'json_object' },
       max_tokens: this.options.maxOutputTokens,
+      ...(this.options.temperature === undefined ? {} : { temperature: this.options.temperature }),
       store: false,
     });
-    const content = completion.choices[0]?.message.content;
+    const choice = completion.choices[0];
+    if (!choice) throw new Error('The language model returned no completion choice.');
+    if (choice.message.refusal) {
+      throw new Error(`The language model refused evaluation: ${choice.message.refusal}`);
+    }
+    if (choice.finish_reason === 'length') {
+      throw new Error(
+        'The language model returned incomplete JSON after reaching its token limit.',
+      );
+    }
+    const content = choice.message.content;
     if (!content) throw new Error('The language model returned no JSON output.');
 
+    let parsed: unknown;
     try {
-      return request.schema.parse(JSON.parse(withoutMarkdownFence(content)));
+      parsed = parseJsonContent(content);
     } catch (error) {
-      throw new Error('The language model returned invalid evaluation JSON.', { cause: error });
+      throw new Error('The language model returned invalid JSON syntax.', { cause: error });
     }
+    const validation = request.schema.safeParse(parsed);
+    if (validation.success) return validation.data;
+    const issues = validation.error.issues
+      .slice(0, 5)
+      .map((issue) => `${issue.path.join('.') || 'response'}: ${issue.message}`)
+      .join('; ');
+    throw new Error(`The language model returned JSON outside the required schema: ${issues}`);
   }
 }
 
 /** Exact JSON body used for OpenAI-compatible JSON Schema requests. */
 export function buildOpenAiCompatibleJsonSchemaBody<TSchema extends z.ZodType>(
-  options: Pick<OpenAiCompatibleLanguageModelOptions, 'model' | 'maxOutputTokens' | 'extraBody'>,
+  options: Pick<
+    OpenAiCompatibleLanguageModelOptions,
+    'model' | 'maxOutputTokens' | 'temperature' | 'extraBody'
+  >,
   request: StructuredGenerationRequest<TSchema>,
 ) {
   return {
@@ -106,6 +129,7 @@ export function buildOpenAiCompatibleJsonSchemaBody<TSchema extends z.ZodType>(
     messages: buildMessages(request),
     response_format: zodResponseFormat(request.schema, request.schemaName),
     max_tokens: options.maxOutputTokens,
+    ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
     store: false,
   };
 }
@@ -113,7 +137,9 @@ export function buildOpenAiCompatibleJsonSchemaBody<TSchema extends z.ZodType>(
 function isRetryableStructuredOutputError(error: unknown): boolean {
   if (error instanceof z.ZodError) return true;
   if (!(error instanceof Error)) return false;
-  return /no structured output|no json output|invalid evaluation json/i.test(error.message);
+  return /no structured output|no json output|incomplete json|invalid json syntax|outside the required schema/i.test(
+    error.message,
+  );
 }
 
 function buildMessages<TSchema extends z.ZodType>(
@@ -121,7 +147,7 @@ function buildMessages<TSchema extends z.ZodType>(
   requiredSchema?: unknown,
 ) {
   const systemPrompt = requiredSchema
-    ? `${request.systemPrompt}\n\nRequired JSON Schema:\n${JSON.stringify(requiredSchema)}`
+    ? `${request.systemPrompt}\n\nReturn exactly one JSON object whose root matches this schema. Do not add prose, Markdown, or a wrapper key.\n\nRequired JSON Schema:\n${JSON.stringify(requiredSchema)}`
     : request.systemPrompt;
   return [
     { role: 'system' as const, content: systemPrompt },
@@ -133,4 +159,8 @@ function withoutMarkdownFence(content: string): string {
   const trimmed = content.trim();
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
   return fenced?.[1] ?? trimmed;
+}
+
+function parseJsonContent(content: string): unknown {
+  return JSON.parse(withoutMarkdownFence(content)) as unknown;
 }

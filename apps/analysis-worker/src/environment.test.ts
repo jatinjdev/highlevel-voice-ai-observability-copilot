@@ -37,6 +37,7 @@ describe('validateWorkerEnvironment', () => {
       LLM_BASE_URL: 'https://integrate.api.nvidia.com/v1',
       LLM_API_KEY: 'test-key',
       LLM_MAX_OUTPUT_TOKENS: '8192',
+      LLM_TEMPERATURE: '0',
       LLM_REQUEST_TIMEOUT_MS: '180000',
       ANALYSIS_CONCURRENCY: '3',
     });
@@ -44,6 +45,7 @@ describe('validateWorkerEnvironment', () => {
     expect(environment).toMatchObject({
       LLM_PROVIDER_ID: 'nvidia',
       LLM_MAX_OUTPUT_TOKENS: 8_192,
+      LLM_TEMPERATURE: 0,
       LLM_EXTRA_BODY_JSON: {},
       LLM_REQUEST_TIMEOUT_MS: 180_000,
       ANALYSIS_CONCURRENCY: 3,

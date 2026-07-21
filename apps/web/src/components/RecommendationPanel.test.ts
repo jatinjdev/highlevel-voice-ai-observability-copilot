@@ -11,6 +11,11 @@ function recommendation(overrides: Partial<Recommendation> = {}): Recommendation
     criterionName: 'Confirm before completion',
     headline: 'Clarify the call flow',
     explanation: 'The agent skipped a required confirmation.',
+    capabilityId: 'prompt.core-instructions',
+    capabilityLabel: 'Prompt',
+    uiPath: 'Build > Agent prompt',
+    advice: 'Use the exact instruction below.',
+    promptRemovals: [],
     promptAddition: 'Confirm the request before completing it.',
     affectedCallCount: 6,
     sampledFailureCount: 6,
@@ -28,8 +33,66 @@ describe('RecommendationPanel', () => {
     expect(wrapper.text()).toContain('Aggregated from 12 analyzed calls');
     expect(wrapper.text()).toContain('Seen in 6 calls');
     expect(wrapper.text()).toContain('The agent skipped a required confirmation.');
+    expect(wrapper.text()).toContain('Prompt');
     expect(wrapper.text()).toContain('Paste this into your agent prompt');
     expect(wrapper.text()).toContain('Confirm the request before completing it.');
+    expect(wrapper.get('.recommendation-generate-button').text()).toBe('Regenerate');
+    expect(wrapper.get('.recommendation-list').findAll('.recommendation-card')).toHaveLength(1);
+  });
+
+  it('shows an exact prompt replacement with a red removal block', () => {
+    const wrapper = mount(RecommendationPanel, {
+      props: {
+        recommendations: [
+          recommendation({
+            promptRemovals: [
+              'Estimate prices and delivery times for every caller.',
+              'Make up random prices.',
+            ],
+            promptAddition: 'Only quote prices returned by an approved pricing source.',
+          }),
+        ],
+      },
+    });
+
+    expect(wrapper.get('.recommendation-remove-block').text()).toContain(
+      'Estimate prices and delivery times for every caller.',
+    );
+    expect(wrapper.get('.recommendation-remove-block').text()).toContain('Make up random prices.');
+    expect(wrapper.get('.recommendation-copy-block').text()).toContain(
+      'Only quote prices returned by an approved pricing source.',
+    );
+  });
+
+  it('shows configuration advice without fake prompt controls', () => {
+    const wrapper = mount(RecommendationPanel, {
+      props: {
+        recommendations: [
+          recommendation({
+            capabilityId: 'action.appointment-booking',
+            capabilityLabel: 'Actions',
+            uiPath: 'Build > Actions > During the Call > Book Appointment',
+            advice: 'Connect the eligible calendar and configure the unavailable-slot fallback.',
+            promptAddition: null,
+          }),
+        ],
+      },
+    });
+
+    expect(wrapper.text()).toContain('Actions');
+    expect(wrapper.text()).toContain('Book Appointment');
+    expect(wrapper.text()).toContain('Connect the eligible calendar');
+    expect(wrapper.find('.recommendation-copy-block').exists()).toBe(false);
+  });
+
+  it('offers one generate action when no recommendations exist', async () => {
+    const wrapper = mount(RecommendationPanel, { props: { recommendations: [] } });
+
+    expect(wrapper.get('.recommendation-empty-state').text()).toBe('No generated recommendations.');
+    expect(wrapper.get('.recommendation-generate-button').text()).toBe('Generate');
+    await wrapper.get('.recommendation-generate-button').trigger('click');
+
+    expect(wrapper.emitted('generate')).toEqual([[]]);
   });
 
   it('emits the recommendation from the copy icon', async () => {

@@ -62,6 +62,7 @@ COPY --from=production-dependencies --chown=node:node /app/packages/messaging/no
 
 COPY --from=build --chown=node:node /app/apps/api/dist apps/api/dist
 COPY --from=build --chown=node:node /app/apps/api/drizzle apps/api/drizzle
+COPY --from=build --chown=node:node /app/apps/api/fixtures apps/api/fixtures
 COPY --from=build --chown=node:node /app/apps/api/package.json apps/api/package.json
 COPY --from=build --chown=node:node /app/apps/ingestion-worker/dist apps/ingestion-worker/dist
 COPY --from=build --chown=node:node /app/apps/ingestion-worker/package.json apps/ingestion-worker/package.json

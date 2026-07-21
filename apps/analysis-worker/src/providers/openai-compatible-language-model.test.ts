@@ -57,6 +57,7 @@ describe('OpenAiCompatibleLanguageModel', () => {
           providerId: 'test-provider',
           structuredOutputMode,
           maxOutputTokens: 4_096,
+          temperature: 0,
           requestTimeoutMs: 10_000,
           extraBody: { chat_template_kwargs: { enable_thinking: false } },
         });
@@ -74,6 +75,7 @@ describe('OpenAiCompatibleLanguageModel', () => {
         expect(requests[0]?.body).toMatchObject({
           model: 'test-model',
           max_tokens: 4_096,
+          temperature: 0,
           store: false,
         });
         expect(requests[0]?.body.response_format).toMatchObject({ type: structuredOutputMode });
@@ -82,6 +84,7 @@ describe('OpenAiCompatibleLanguageModel', () => {
           const messages = requests[0]?.body.messages as Array<{ content: string }>;
           expect(messages[0]?.content).toContain('Required JSON Schema');
           expect(messages[0]?.content).toContain('"result"');
+          expect(messages[0]?.content).toContain('Do not add prose, Markdown, or a wrapper key');
         }
       } finally {
         await new Promise<void>((resolve, reject) => {

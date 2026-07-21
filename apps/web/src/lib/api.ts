@@ -1,25 +1,22 @@
 import {
+  agentAnalysisRequestResponseSchema,
+  agentDiscoveryResponseSchema,
   agentAnalysisDetailSchema,
   agentCallPageSchema,
-  agentReanalysisResponseSchema,
   callAnalysisDetailSchema,
-  callReanalysisResponseSchema,
+  callAnalysisRequestResponseSchema,
   healthResponseSchema,
   observabilityDashboardSchema,
-  pipelineSummarySchema,
-  pipelineSyncResponseSchema,
-  recommendationGenerationResponseSchema,
+  recommendationBatchResponseSchema,
   successCriterionMutationResponseSchema,
   type HealthResponse,
   type AgentAnalysisDetail,
+  type AgentAnalysisRequestResponse,
+  type AgentAnalysisWindow,
   type AgentCallPage,
-  type AgentReanalysisResponse,
-  type AgentReanalysisWindow,
   type CallAnalysisDetail,
-  type CallReanalysisResponse,
+  type CallAnalysisRequestResponse,
   type ObservabilityDashboard,
-  type PipelineSummary,
-  type PipelineSyncResponse,
 } from '@copilot/contracts';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
@@ -87,6 +84,12 @@ export async function getObservabilityDashboard(): Promise<ObservabilityDashboar
   return observabilityDashboardSchema.parse(await response.json());
 }
 
+export async function discoverVoiceAgents() {
+  const response = await authenticatedFetch('/observability/agents/discover', { method: 'POST' });
+  if (!response.ok) throw new Error(`Agent discovery failed with status ${response.status}.`);
+  return agentDiscoveryResponseSchema.parse(await response.json());
+}
+
 export async function getAgentAnalysis(agentId: string): Promise<AgentAnalysisDetail> {
   const response = await authenticatedFetch(`/observability/agents/${encodeURIComponent(agentId)}`);
   if (!response.ok)
@@ -113,21 +116,21 @@ export async function getCallAnalysis(callId: string): Promise<CallAnalysisDetai
   return callAnalysisDetailSchema.parse(await response.json());
 }
 
-export async function reanalyzeCall(callId: string): Promise<CallReanalysisResponse> {
+export async function analyzeCall(callId: string): Promise<CallAnalysisRequestResponse> {
   const response = await authenticatedFetch(
-    `/observability/calls/${encodeURIComponent(callId)}/reanalyze`,
+    `/observability/calls/${encodeURIComponent(callId)}/analyze`,
     { method: 'POST' },
   );
-  if (!response.ok) throw new Error(`Reanalysis request failed with status ${response.status}.`);
-  return callReanalysisResponseSchema.parse(await response.json());
+  if (!response.ok) throw new Error(`Analysis request failed with status ${response.status}.`);
+  return callAnalysisRequestResponseSchema.parse(await response.json());
 }
 
-export async function reanalyzeAgent(
+export async function analyzeAgent(
   agentId: string,
-  window: AgentReanalysisWindow,
-): Promise<AgentReanalysisResponse> {
+  window: AgentAnalysisWindow,
+): Promise<AgentAnalysisRequestResponse> {
   const response = await authenticatedFetch(
-    `/observability/agents/${encodeURIComponent(agentId)}/reanalyze`,
+    `/observability/agents/${encodeURIComponent(agentId)}/analyze`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -135,8 +138,8 @@ export async function reanalyzeAgent(
     },
   );
   if (!response.ok)
-    throw new Error(`Agent reanalysis request failed with status ${response.status}.`);
-  return agentReanalysisResponseSchema.parse(await response.json());
+    throw new Error(`Agent analysis request failed with status ${response.status}.`);
+  return agentAnalysisRequestResponseSchema.parse(await response.json());
 }
 
 export async function createSuccessCriterion(agentId: string, name: string, description: string) {
@@ -153,24 +156,6 @@ export async function createSuccessCriterion(agentId: string, name: string, desc
   return successCriterionMutationResponseSchema.parse(await response.json());
 }
 
-export async function updateSuccessCriterion(
-  agentId: string,
-  criterionId: string,
-  description: string,
-) {
-  const response = await authenticatedFetch(
-    `/observability/agents/${encodeURIComponent(agentId)}/success-criteria/${encodeURIComponent(criterionId)}`,
-    {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ description }),
-    },
-  );
-  if (!response.ok)
-    throw new Error(`Success Criterion update failed with status ${response.status}.`);
-  return successCriterionMutationResponseSchema.parse(await response.json());
-}
-
 export async function deleteSuccessCriterion(agentId: string, criterionId: string): Promise<void> {
   const response = await authenticatedFetch(
     `/observability/agents/${encodeURIComponent(agentId)}/success-criteria/${encodeURIComponent(criterionId)}`,
@@ -180,14 +165,14 @@ export async function deleteSuccessCriterion(agentId: string, criterionId: strin
     throw new Error(`Success Criterion deletion failed with status ${response.status}.`);
 }
 
-export async function generateRecommendation(agentId: string, criterionId: string) {
+export async function generateRecommendations(agentId: string) {
   const response = await authenticatedFetch(
-    `/observability/agents/${encodeURIComponent(agentId)}/success-criteria/${encodeURIComponent(criterionId)}/recommendation`,
+    `/observability/agents/${encodeURIComponent(agentId)}/recommendations`,
     { method: 'POST' },
   );
   if (!response.ok)
     throw new Error(`Recommendation generation failed with status ${response.status}.`);
-  return recommendationGenerationResponseSchema.parse(await response.json());
+  return recommendationBatchResponseSchema.parse(await response.json());
 }
 
 export async function deleteRecommendation(agentId: string, criterionId: string): Promise<void> {
@@ -197,24 +182,4 @@ export async function deleteRecommendation(agentId: string, criterionId: string)
   );
   if (!response.ok)
     throw new Error(`Recommendation deletion failed with status ${response.status}.`);
-}
-
-export async function getPipelineSummary(): Promise<PipelineSummary> {
-  const response = await authenticatedFetch('/pipeline');
-
-  if (!response.ok) {
-    throw new Error(`Pipeline request failed with status ${response.status}.`);
-  }
-
-  return pipelineSummarySchema.parse(await response.json());
-}
-
-export async function syncPipeline(): Promise<PipelineSyncResponse> {
-  const response = await authenticatedFetch('/pipeline/sync', { method: 'POST' });
-
-  if (!response.ok) {
-    throw new Error(`Pipeline sync failed with status ${response.status}.`);
-  }
-
-  return pipelineSyncResponseSchema.parse(await response.json());
 }

@@ -4,9 +4,7 @@ import { eq } from 'drizzle-orm';
 import { DatabaseService } from '../database/database.service';
 import {
   companies,
-  installationLocationGrants,
   locations,
-  marketplaceAppInstallations,
   marketplaceInstallations,
   messageOutbox,
   webhookInbox,
@@ -84,36 +82,6 @@ export class HighLevelWebhookRepository {
           },
         });
       } else {
-        const installation = await this.upsertInstallation(
-          transaction,
-          input.supportedWebhook,
-          company?.id,
-          now,
-        );
-
-        if (location) {
-          await transaction
-            .insert(installationLocationGrants)
-            .values({
-              installationId: installation.id,
-              locationId: location.id,
-              status: input.supportedWebhook.type === 'UNINSTALL' ? 'revoked' : 'active',
-              revokedAt: input.supportedWebhook.type === 'UNINSTALL' ? now : null,
-              updatedAt: now,
-            })
-            .onConflictDoUpdate({
-              target: [
-                installationLocationGrants.installationId,
-                installationLocationGrants.locationId,
-              ],
-              set: {
-                status: input.supportedWebhook.type === 'UNINSTALL' ? 'revoked' : 'active',
-                revokedAt: input.supportedWebhook.type === 'UNINSTALL' ? now : null,
-                updatedAt: now,
-              },
-            });
-        }
-
         if (input.supportedWebhook.type === 'UNINSTALL') {
           await transaction
             .update(marketplaceInstallations)
@@ -124,23 +92,6 @@ export class HighLevelWebhookRepository {
                 : eq(marketplaceInstallations.companyId, input.supportedWebhook.companyId!),
             );
         }
-
-        const lifecycleAction =
-          input.supportedWebhook.type === 'INSTALL'
-            ? 'installed'
-            : input.supportedWebhook.type === 'UPDATE'
-              ? 'updated'
-              : 'uninstalled';
-        await transaction.insert(messageOutbox).values({
-          sourceInboxId: inbox.id,
-          eventType: `marketplace.installation.${lifecycleAction}`,
-          aggregateType: 'marketplace_installation',
-          aggregateId: installation.id,
-          correlationId: inbox.id,
-          companyId: company?.id,
-          locationId: location?.id,
-          payload: { installationId: installation.id },
-        });
       }
 
       await transaction
@@ -188,45 +139,5 @@ export class HighLevelWebhookRepository {
       .returning({ id: locations.id });
     if (!location) throw new Error('Location upsert did not return a record.');
     return location;
-  }
-
-  private async upsertInstallation(
-    transaction: Parameters<Parameters<DatabaseService['client']['transaction']>[0]>[0],
-    webhook: Extract<SupportedHighLevelWebhook, { type: 'INSTALL' | 'UPDATE' | 'UNINSTALL' }>,
-    companyId: string | undefined,
-    now: Date,
-  ) {
-    const subjectType = webhook.locationId ? 'Location' : 'Company';
-    const subjectExternalId = webhook.locationId ?? webhook.companyId!;
-    const installationKey = `${webhook.appId}:${subjectType}:${subjectExternalId}`;
-    const uninstalled = webhook.type === 'UNINSTALL';
-    const [installation] = await transaction
-      .insert(marketplaceAppInstallations)
-      .values({
-        installationKey,
-        appId: webhook.appId,
-        subjectType,
-        subjectExternalId,
-        companyId,
-        installerUserId: typeof webhook.userId === 'string' ? webhook.userId : undefined,
-        status: uninstalled ? 'uninstalled' : 'active',
-        installedAt: uninstalled ? null : now,
-        uninstalledAt: uninstalled ? now : null,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: marketplaceAppInstallations.installationKey,
-        set: {
-          ...(companyId ? { companyId } : {}),
-          ...(typeof webhook.userId === 'string' ? { installerUserId: webhook.userId } : {}),
-          status: uninstalled ? 'uninstalled' : 'active',
-          ...(webhook.type === 'INSTALL' ? { installedAt: now } : {}),
-          uninstalledAt: uninstalled ? now : null,
-          updatedAt: now,
-        },
-      })
-      .returning({ id: marketplaceAppInstallations.id });
-    if (!installation) throw new Error('Installation upsert did not return a record.');
-    return installation;
   }
 }

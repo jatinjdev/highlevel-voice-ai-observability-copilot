@@ -5,22 +5,23 @@ import type {
   Recommendation,
   ObservabilityDashboard,
 } from '@copilot/contracts';
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import RecommendationPanel from '../components/RecommendationPanel.vue';
 import {
+  analyzeAgent,
+  analyzeCall,
   createSuccessCriterion,
   deleteRecommendation,
   deleteSuccessCriterion,
-  generateRecommendation,
+  discoverVoiceAgents,
+  generateRecommendations,
   getAgentAnalysis,
   getAgentCalls,
   getCallAnalysis,
   getObservabilityDashboard,
   initializeMarketplaceSession,
-  reanalyzeAgent,
-  reanalyzeCall,
 } from '../lib/api';
 
 interface TurnAnnotation {
@@ -54,20 +55,31 @@ const selectedCriterionId = ref<string | null>(null);
 const newCriterionName = ref('');
 const newCriterionDescription = ref('');
 const addingCriterion = ref(false);
-const generatingCriterionId = ref<string | null>(null);
+const generatingRecommendations = ref(false);
 const loadingMoreCalls = ref(false);
-const reanalysisMenuOpen = ref(false);
+const analysisMenuOpen = ref(false);
 const callFilterOpen = ref(false);
 const callIssueFilter = ref<CallIssueFilter>('all');
 const criterionComposerOpen = ref(false);
 const selectedAnnotationKey = ref<string | null>(null);
 const callSidebarOpen = ref(false);
+let statusPollTimer: number | undefined;
+let noticeTimer: number | undefined;
+const NOTICE_DURATION_MS = 4_000;
 
 const view = computed(() => (call.value ? 'call' : agent.value ? 'agent' : 'dashboard'));
+const loadingMessage = computed(() => {
+  if (stringQuery(route.query.callId)) return 'Loading call analysis…';
+  if (stringQuery(route.query.agentId)) return 'Loading Voice Agent…';
+  return 'Loading Voice Agents…';
+});
 const filteredAgents = computed(() => {
   const term = search.value.trim().toLowerCase();
   return (dashboard.value?.agents ?? []).filter(({ name }) => name.toLowerCase().includes(term));
 });
+const dashboardEmptyMessage = computed(() =>
+  search.value.trim() ? 'No Voice Agents match your search.' : 'No Voice Agents found.',
+);
 const selectedCriterion = computed(() =>
   agent.value?.successCriteria.find(({ id }) => id === selectedCriterionId.value),
 );
@@ -87,8 +99,16 @@ const visibleCalls = computed(() => {
   return (agent.value?.calls ?? []).filter((item) => {
     if (selectedCriterionId.value && !item.failedCriterionIds.includes(selectedCriterionId.value))
       return false;
-    if (callIssueFilter.value === 'flagged' && item.flaggedIssueCount === 0) return false;
-    if (callIssueFilter.value === 'unflagged' && item.flaggedIssueCount > 0) return false;
+    if (
+      callIssueFilter.value === 'flagged' &&
+      (item.analysisStatus !== 'completed' || item.flaggedIssueCount === 0)
+    )
+      return false;
+    if (
+      callIssueFilter.value === 'unflagged' &&
+      (item.analysisStatus !== 'completed' || item.flaggedIssueCount > 0)
+    )
+      return false;
     return (
       !term ||
       item.highLevelCallId.toLowerCase().includes(term) ||
@@ -96,8 +116,26 @@ const visibleCalls = computed(() => {
     );
   });
 });
+const callLogEmptyMessage = computed(() => {
+  if (selectedCriterion.value) return 'No calls failed this criterion.';
+  if (callIssueFilter.value === 'flagged') return 'No calls have flagged issues.';
+  if (callIssueFilter.value === 'unflagged') return 'No calls without flagged issues.';
+  if (callSearch.value.trim()) return 'No calls match your search.';
+  return 'No calls available.';
+});
 const failedResults = computed(
   () => call.value?.criterionResults.filter(({ result }) => result === 'fail') ?? [],
+);
+const callAnalysisPending = computed(
+  () => call.value?.analysisStatus === 'queued' || call.value?.analysisStatus === 'processing',
+);
+const recommendationGenerationPending = computed(
+  () =>
+    generatingRecommendations.value ||
+    (agent.value?.recommendationStatuses.some(({ status }) =>
+      ['queued', 'processing'].includes(status),
+    ) ??
+      false),
 );
 const prioritizedCriterionResults = computed(() => {
   const order = { fail: 0, unknown: 1, pass: 2, not_applicable: 3 } as const;
@@ -132,6 +170,10 @@ const highlightedActionIds = computed(() => {
 });
 
 onMounted(loadRoute);
+onUnmounted(() => {
+  clearStatusPoll();
+  clearNoticeTimer();
+});
 watch(
   () => route.fullPath,
   (current, previous) => {
@@ -140,12 +182,13 @@ watch(
 );
 
 async function loadRoute(): Promise<void> {
+  clearStatusPoll();
   loading.value = true;
   error.value = '';
+  const callId = stringQuery(route.query.callId);
+  const agentId = stringQuery(route.query.agentId);
   try {
     await initializeMarketplaceSession();
-    const callId = stringQuery(route.query.callId);
-    const agentId = stringQuery(route.query.agentId);
     if (callId) {
       call.value = await getCallAnalysis(callId);
       selectedAnnotationKey.value = null;
@@ -157,16 +200,68 @@ async function loadRoute(): Promise<void> {
       call.value = null;
       dashboard.value = null;
     } else {
+      let discoveryFailed = false;
+      try {
+        await discoverVoiceAgents();
+      } catch {
+        discoveryFailed = true;
+      }
       dashboard.value = await getObservabilityDashboard();
+      if (discoveryFailed)
+        showNotice("Voice Agents couldn't be refreshed. Showing the last available list.");
       agent.value = null;
       call.value = null;
     }
-  } catch (cause) {
-    error.value =
-      cause instanceof Error ? cause.message : 'The observability view could not be loaded.';
+  } catch {
+    error.value = callId
+      ? "Couldn't load call analysis. Try again."
+      : agentId
+        ? "Couldn't load this Voice Agent. Try again."
+        : "Couldn't load Voice Agents. Try again.";
   } finally {
     loading.value = false;
+    scheduleStatusPoll();
   }
+}
+
+function clearStatusPoll(): void {
+  if (statusPollTimer !== undefined) window.clearTimeout(statusPollTimer);
+  statusPollTimer = undefined;
+}
+
+function clearNoticeTimer(): void {
+  if (noticeTimer !== undefined) window.clearTimeout(noticeTimer);
+  noticeTimer = undefined;
+}
+
+function showNotice(message: string): void {
+  clearNoticeTimer();
+  notice.value = message;
+  noticeTimer = window.setTimeout(() => {
+    notice.value = '';
+    noticeTimer = undefined;
+  }, NOTICE_DURATION_MS);
+}
+
+function scheduleStatusPoll(): void {
+  clearStatusPoll();
+  if (!agent.value && !callAnalysisPending.value) return;
+  const delay = agent.value ? 5_000 : 2_000;
+  const routeAtSchedule = route.fullPath;
+  statusPollTimer = window.setTimeout(async () => {
+    try {
+      if (route.fullPath !== routeAtSchedule) return;
+      if (call.value && callAnalysisPending.value) {
+        call.value = await getCallAnalysis(call.value.call.id);
+      } else if (agent.value) {
+        agent.value = await getAgentAnalysis(agent.value.agent.id);
+      }
+    } catch {
+      // Keep the last usable projection visible and try again on the next interval.
+    } finally {
+      if (route.fullPath === routeAtSchedule) scheduleStatusPoll();
+    }
+  }, delay);
 }
 
 async function navigate(query: Record<string, string>): Promise<void> {
@@ -182,19 +277,25 @@ async function addCriterion(): Promise<void> {
     newCriterionDescription.value.trim().length < 10
   )
     return;
+  const agentId = agent.value.agent.id;
   addingCriterion.value = true;
+  error.value = '';
   try {
-    await createSuccessCriterion(
-      agent.value.agent.id,
+    const result = await createSuccessCriterion(
+      agentId,
       newCriterionName.value.trim(),
       newCriterionDescription.value.trim(),
     );
+    if (agent.value?.agent.id !== agentId) return;
+    agent.value.successCriteria.push({
+      ...result.criterion,
+      resultDistribution: { pass: 0, fail: 0, notApplicable: 0, unknown: 0 },
+    });
     newCriterionName.value = '';
     newCriterionDescription.value = '';
     criterionComposerOpen.value = false;
-    await loadRoute();
-  } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : 'The criterion could not be added.';
+  } catch {
+    error.value = "Couldn't add the Success Criterion. Try again.";
   } finally {
     addingCriterion.value = false;
   }
@@ -203,11 +304,14 @@ async function addCriterion(): Promise<void> {
 async function loadMoreCalls(): Promise<void> {
   if (!agent.value?.nextCallCursor || loadingMoreCalls.value) return;
   loadingMoreCalls.value = true;
+  error.value = '';
   try {
     const page = await getAgentCalls(agent.value.agent.id, agent.value.nextCallCursor);
     agent.value.calls.push(...page.items);
     agent.value.nextCallCursor = page.nextCursor;
     agent.value.totalCallCount = page.totalCount;
+  } catch {
+    error.value = "Couldn't load older calls. Try again.";
   } finally {
     loadingMoreCalls.value = false;
   }
@@ -215,70 +319,132 @@ async function loadMoreCalls(): Promise<void> {
 
 async function removeCriterion(criterionId: string): Promise<void> {
   if (!agent.value) return;
-  await deleteSuccessCriterion(agent.value.agent.id, criterionId);
-  selectedCriterionId.value = null;
-  await loadRoute();
-}
-
-async function requestRecommendation(criterionId: string): Promise<void> {
-  if (!agent.value) return;
   const agentId = agent.value.agent.id;
-  generatingCriterionId.value = criterionId;
+  error.value = '';
   try {
-    await generateRecommendation(agentId, criterionId);
-    notice.value = 'Recommendation queued';
-    await loadRoute();
-    void pollRecommendation(agentId, criterionId);
-  } finally {
-    generatingCriterionId.value = null;
+    await deleteSuccessCriterion(agentId, criterionId);
+    if (agent.value?.agent.id !== agentId) return;
+    selectedCriterionId.value = null;
+    const refreshedAgent = await getAgentAnalysis(agentId);
+    if (agent.value?.agent.id === agentId) agent.value = refreshedAgent;
+  } catch {
+    error.value = "Couldn't delete the Success Criterion. Try again.";
   }
 }
 
-async function pollRecommendation(agentId: string, criterionId: string): Promise<void> {
+async function requestRecommendations(): Promise<void> {
+  if (!agent.value) return;
+  const agentId = agent.value.agent.id;
+  generatingRecommendations.value = true;
+  error.value = '';
+  try {
+    const result = await generateRecommendations(agentId);
+    if (agent.value?.agent.id !== agentId) return;
+    const queuedCriterionIds = new Set(result.criterionIds);
+    const requestedAt = new Date().toISOString();
+    agent.value.recommendationStatuses = [
+      ...agent.value.recommendationStatuses.filter(
+        ({ criterionId }) => !queuedCriterionIds.has(criterionId),
+      ),
+      ...result.criterionIds.map((criterionId) => ({
+        criterionId,
+        status: 'queued' as const,
+        lastError: null,
+        requestedAt,
+      })),
+    ];
+    if (result.criterionIds.length) void pollRecommendations(agentId, result.criterionIds);
+  } catch {
+    error.value = "Couldn't generate recommendations. Try again.";
+  } finally {
+    generatingRecommendations.value = false;
+  }
+}
+
+async function pollRecommendations(agentId: string, criterionIds: string[]): Promise<void> {
+  const requestedCriteria = new Set(criterionIds);
   for (let attempt = 0; attempt < 60; attempt += 1) {
     await delay(1_500);
     if (agent.value?.agent.id !== agentId) return;
     let current: AgentAnalysisDetail;
     try {
       current = await getAgentAnalysis(agentId);
-    } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : 'Prompt guidance status was lost.';
+    } catch {
+      error.value = "Couldn't refresh recommendation progress. Try again.";
       return;
     }
     if (agent.value?.agent.id !== agentId) return;
     agent.value = current;
-    const state = current.recommendationStatuses.find(
-      (status) => status.criterionId === criterionId,
+    const states = current.recommendationStatuses.filter(({ criterionId }) =>
+      requestedCriteria.has(criterionId),
     );
-    if (!state || state.status === 'queued' || state.status === 'processing') continue;
-    if (state.status === 'completed') notice.value = 'Prompt guidance ready';
-    else if (state.status === 'not_needed')
-      notice.value = 'The current prompt already covers this criterion';
-    else error.value = state.lastError ?? 'Prompt guidance could not be generated.';
+    if (
+      states.length < requestedCriteria.size ||
+      states.some(({ status }) => status === 'queued' || status === 'processing')
+    )
+      continue;
+    const failures = states.filter(({ status }) => status === 'failed');
+    if (failures.length) {
+      error.value = `${failures.length} ${failures.length === 1 ? 'recommendation' : 'recommendations'} could not be generated.`;
+      return;
+    }
     return;
   }
-  notice.value = 'Prompt guidance is still processing';
 }
 
 async function removeRecommendation(recommendation: Recommendation): Promise<void> {
   if (!agent.value) return;
-  await deleteRecommendation(agent.value.agent.id, recommendation.criterionId);
-  await loadRoute();
+  const agentId = agent.value.agent.id;
+  error.value = '';
+  try {
+    await deleteRecommendation(agentId, recommendation.criterionId);
+    if (agent.value?.agent.id !== agentId) return;
+    agent.value.recommendations = agent.value.recommendations.filter(
+      ({ criterionId }) => criterionId !== recommendation.criterionId,
+    );
+    agent.value.recommendationStatuses = agent.value.recommendationStatuses.filter(
+      ({ criterionId }) => criterionId !== recommendation.criterionId,
+    );
+  } catch {
+    error.value = "Couldn't delete the recommendation. Try again.";
+  }
 }
 
 async function runCallAnalysis(): Promise<void> {
-  if (!call.value) return;
-  const result = await reanalyzeCall(call.value.call.id);
-  notice.value = `Analysis queued · ${result.requestId.slice(0, 8)}`;
+  if (!call.value || callAnalysisPending.value) return;
+  const callId = call.value.call.id;
+  error.value = '';
+  try {
+    await analyzeCall(callId);
+    if (call.value?.call.id !== callId) return;
+    call.value = {
+      ...call.value,
+      analysisStatus: 'queued',
+      analysis: null,
+      overview: null,
+      criterionResults: [],
+    };
+    showNotice('Call added for analysis');
+    scheduleStatusPoll();
+  } catch {
+    error.value = "Couldn't start analysis. Try again.";
+  }
 }
 
 async function runAgentAnalysis(window: '24h' | '7d'): Promise<void> {
   if (!agent.value) return;
-  reanalysisMenuOpen.value = false;
-  const result = await reanalyzeAgent(agent.value.agent.id, window);
-  notice.value = result.queuedCallCount
-    ? `${result.queuedCallCount} calls queued for analysis`
-    : 'No calls found in that window';
+  analysisMenuOpen.value = false;
+  error.value = '';
+  try {
+    const result = await analyzeAgent(agent.value.agent.id, window);
+    showNotice(
+      result.queuedCallCount
+        ? `${result.queuedCallCount} ${result.queuedCallCount === 1 ? 'call' : 'calls'} added for analysis`
+        : 'No calls found in the selected period',
+    );
+  } catch {
+    error.value = "Couldn't analyze calls for the selected period. Try again.";
+  }
 }
 
 function selectCallIssueFilter(filter: CallIssueFilter): void {
@@ -288,8 +454,14 @@ function selectCallIssueFilter(filter: CallIssueFilter): void {
 }
 
 async function copyRecommendation(recommendation: Recommendation): Promise<void> {
-  await navigator.clipboard.writeText(recommendation.promptAddition);
-  notice.value = 'Prompt change copied';
+  error.value = '';
+  if (!recommendation.promptAddition) return;
+  try {
+    await navigator.clipboard.writeText(recommendation.promptAddition);
+    showNotice('Prompt copied');
+  } catch {
+    error.value = "Couldn't copy the prompt. Try again.";
+  }
 }
 
 async function selectCriterion(
@@ -302,27 +474,23 @@ async function selectCriterion(
   if (nextCriterionId) await scrollToEvidence(turnId, actionEventId);
 }
 
-function recommendationStatus(criterionId: string): string | null {
-  return (
-    agent.value?.recommendationStatuses.find((status) => status.criterionId === criterionId)
-      ?.status ?? null
-  );
+function formatAnalysisStatus(status: 'queued' | 'processing' | 'completed' | 'failed'): string {
+  if (status === 'processing') return 'Processing';
+  if (status === 'failed') return 'Failed';
+  if (status === 'completed') return 'Complete';
+  return 'Queued';
 }
 
-function hasRecommendation(criterionId: string): boolean {
-  return (
-    agent.value?.recommendations.some(
-      (recommendation) => recommendation.criterionId === criterionId,
-    ) ?? false
-  );
+function callAnalysisMessage(status: CallAnalysisDetail['analysisStatus']): string {
+  if (status === 'processing') return 'Analyzing this call.';
+  if (status === 'failed') return 'Select Analyze call to try again.';
+  return 'Analysis will start shortly.';
 }
 
-function recommendationButtonLabel(criterionId: string): string {
-  const status = recommendationStatus(criterionId);
-  if (status === 'queued' || status === 'processing') return 'Checking current prompt…';
-  if (status === 'not_needed') return 'Prompt covered · Check again';
-  if (status === 'failed') return 'Try prompt guidance again';
-  return hasRecommendation(criterionId) ? 'Regenerate prompt guidance' : 'Generate prompt guidance';
+function callSummaryMessage(status: CallAnalysisDetail['analysisStatus']): string {
+  return status === 'failed'
+    ? 'Summary is unavailable because analysis failed.'
+    : 'Summary will appear after analysis.';
 }
 
 async function scrollToEvidence(turnId?: string, actionEventId?: string): Promise<void> {
@@ -349,6 +517,20 @@ function formatDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
     month: 'short',
     day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
+function formatCallDate(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+  }).format(new Date(value));
+}
+
+function formatCallTime(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {
     hour: 'numeric',
     minute: '2-digit',
   }).format(new Date(value));
@@ -469,10 +651,10 @@ function delay(milliseconds: number): Promise<void> {
 
 <template>
   <main class="app-shell" :data-view="view">
-    <div v-if="notice" class="toast" @animationend="notice = ''">{{ notice }}</div>
+    <div v-if="notice" class="toast">{{ notice }}</div>
     <div class="page-shell">
       <div v-if="error" class="error-banner">{{ error }}</div>
-      <div v-if="loading" class="loading-panel">Loading voice agent analysis…</div>
+      <div v-if="loading" class="loading-panel">{{ loadingMessage }}</div>
 
       <template v-else-if="dashboard">
         <section class="page-heading dashboard-heading">
@@ -487,7 +669,7 @@ function delay(milliseconds: number): Promise<void> {
         </section>
         <section class="data-panel fleet-panel">
           <div v-if="!filteredAgents.length" class="empty-panel">
-            No Voice Agents are available for this location.
+            {{ dashboardEmptyMessage }}
           </div>
           <div v-else class="table-scroll">
             <table class="data-table fleet-table">
@@ -496,7 +678,6 @@ function delay(milliseconds: number): Promise<void> {
                   <th>Agent name</th>
                   <th class="numeric">Calls analyzed</th>
                   <th class="numeric">Avg. duration</th>
-                  <th class="numeric">Script adherence</th>
                   <th class="numeric">Flagged Issues</th>
                   <th aria-label="Open"></th>
                 </tr>
@@ -511,8 +692,7 @@ function delay(milliseconds: number): Promise<void> {
                     <div class="agent-cell">
                       <span class="agent-icon">AI</span>
                       <div>
-                        <strong>{{ item.name }}</strong
-                        ><small>No open insight</small>
+                        <strong>{{ item.name }}</strong>
                       </div>
                     </div>
                   </td>
@@ -520,7 +700,6 @@ function delay(milliseconds: number): Promise<void> {
                   <td class="numeric mono">
                     {{ formatDuration(item.summary.averageDurationSeconds) }}
                   </td>
-                  <td class="numeric mono muted">—</td>
                   <td class="numeric mono">{{ item.summary.flaggedIssueCount }}</td>
                   <td class="row-chevron">›</td>
                 </tr>
@@ -538,30 +717,30 @@ function delay(milliseconds: number): Promise<void> {
         <section class="page-heading agent-heading">
           <h1>{{ agent.agent.name }}</h1>
           <div class="agent-heading-controls">
-            <div class="agent-reanalysis-control">
+            <div class="agent-analysis-control">
               <button
-                class="reanalyze-button"
+                class="analyze-button"
                 type="button"
-                :aria-expanded="reanalysisMenuOpen"
-                @click="reanalysisMenuOpen = !reanalysisMenuOpen"
+                :aria-expanded="analysisMenuOpen"
+                @click="analysisMenuOpen = !analysisMenuOpen"
               >
-                <svg class="reanalyze-refresh-icon" aria-hidden="true" viewBox="0 0 24 24">
+                <svg class="analyze-refresh-icon" aria-hidden="true" viewBox="0 0 24 24">
                   <path d="M20 7v5h-5" />
                   <path d="M4 17v-5h5" />
                   <path d="M18.4 10a7 7 0 0 0-12.2-3.2L4 9" />
                   <path d="M5.6 14a7 7 0 0 0 12.2 3.2L20 15" />
                 </svg>
-                Rerun analysis
-                <svg class="reanalyze-chevron" aria-hidden="true" viewBox="0 0 12 12">
+                Analyze
+                <svg class="analyze-chevron" aria-hidden="true" viewBox="0 0 12 12">
                   <path d="m3 4.5 3 3 3-3" />
                 </svg>
               </button>
-              <div v-if="reanalysisMenuOpen" class="agent-reanalysis-menu">
+              <div v-if="analysisMenuOpen" class="agent-analysis-menu">
                 <button type="button" @click="runAgentAnalysis('24h')">
-                  <span>Last 24 hours</span><small>Queue recent calls</small>
+                  <span>Last 24 hours</span><small>Analyze calls</small>
                 </button>
                 <button type="button" @click="runAgentAnalysis('7d')">
-                  <span>Last 7 days</span><small>Queue the weekly window</small>
+                  <span>Last 7 days</span><small>Analyze calls</small>
                 </button>
               </div>
             </div>
@@ -623,19 +802,17 @@ function delay(milliseconds: number): Promise<void> {
                     class="active-criterion-filter"
                     type="button"
                     title="Clear criterion filter"
+                    :aria-label="`Clear ${selectedCriterion.name} filter`"
                     @click="selectedCriterionId = null"
                   >
-                    {{ selectedCriterion.name }} <span aria-hidden="true">×</span>
+                    <span class="active-criterion-filter-label">{{ selectedCriterion.name }}</span>
+                    <span class="active-criterion-filter-dismiss" aria-hidden="true">×</span>
                   </button>
                   <span>{{ visibleCalls.length }} of {{ agent.totalCallCount }}</span>
                 </div>
               </header>
               <div v-if="!visibleCalls.length" class="empty-panel compact">
-                {{
-                  selectedCriterion
-                    ? 'No calls failed this criterion.'
-                    : 'No calls match your search.'
-                }}
+                {{ callLogEmptyMessage }}
               </div>
               <div v-else class="table-scroll calls-scroll">
                 <table class="data-table fleet-table calls-table">
@@ -643,7 +820,11 @@ function delay(milliseconds: number): Promise<void> {
                     <tr>
                       <th>Time</th>
                       <th class="numeric">Duration</th>
-                      <th class="numeric">Flagged Issues</th>
+                      <th class="numeric">
+                        <span class="flagged-issues-heading"
+                          ><span>Flagged</span> <span>Issues</span></span
+                        >
+                      </th>
                       <th></th>
                     </tr>
                   </thead>
@@ -654,10 +835,22 @@ function delay(milliseconds: number): Promise<void> {
                       @click="navigate({ callId: item.id })"
                     >
                       <td class="mono">
-                        <time>{{ formatDate(item.createdAt) }}</time>
+                        <time :datetime="item.createdAt"
+                          ><span class="call-date-part">{{ formatCallDate(item.createdAt) }}</span
+                          ><span class="call-time-part">{{
+                            formatCallTime(item.createdAt)
+                          }}</span></time
+                        >
                       </td>
                       <td class="numeric mono">{{ formatDuration(item.durationSeconds) }}</td>
-                      <td class="numeric">{{ item.flaggedIssueCount }}</td>
+                      <td class="numeric">
+                        <span
+                          v-if="item.analysisStatus !== 'completed'"
+                          class="call-analysis-status"
+                          :data-status="item.analysisStatus"
+                          >{{ formatAnalysisStatus(item.analysisStatus) }}</span
+                        ><template v-else>{{ item.flaggedIssueCount }}</template>
+                      </td>
                       <td class="row-chevron">›</td>
                     </tr>
                   </tbody>
@@ -762,18 +955,6 @@ function delay(milliseconds: number): Promise<void> {
                     </div>
                   </button>
                   <button
-                    v-if="criterion.resultDistribution.fail > 0"
-                    class="criterion-guidance-button"
-                    type="button"
-                    :disabled="
-                      generatingCriterionId === criterion.id ||
-                      ['queued', 'processing'].includes(recommendationStatus(criterion.id) ?? '')
-                    "
-                    @click.stop="requestRecommendation(criterion.id)"
-                  >
-                    {{ recommendationButtonLabel(criterion.id) }}
-                  </button>
-                  <button
                     class="criterion-delete-button"
                     type="button"
                     aria-label="Delete criterion"
@@ -792,7 +973,9 @@ function delay(milliseconds: number): Promise<void> {
             scope="agent"
             :recommendations="agent.recommendations"
             :analyzed-call-count="agent.summary.callsAnalyzed"
+            :generation-pending="recommendationGenerationPending"
             @copy="copyRecommendation"
+            @generate="requestRecommendations"
             @remove="removeRecommendation"
           />
         </div>
@@ -812,12 +995,41 @@ function delay(milliseconds: number): Promise<void> {
                 <h1>Transcript Forensic View</h1>
                 <div class="call-header-badges">
                   <span>Duration: {{ formatDuration(call.call.durationSeconds) }}</span>
-                  <span :data-review="failedResults.length > 0"
+                  <span
+                    :data-review="
+                      call.analysisStatus === 'completed'
+                        ? failedResults.length > 0
+                          ? 'flagged'
+                          : 'clear'
+                        : 'pending'
+                    "
                     >Flagged issues: {{ failedResults.length }}</span
                   >
-                  <button type="button" @click="runCallAnalysis">↻ Rerun analysis</button>
+                  <button
+                    type="button"
+                    :disabled="callAnalysisPending"
+                    :aria-busy="callAnalysisPending"
+                    @click="runCallAnalysis"
+                  >
+                    {{
+                      call.analysisStatus === 'queued'
+                        ? 'Queued'
+                        : call.analysisStatus === 'processing'
+                          ? 'Processing…'
+                          : 'Analyze call'
+                    }}
+                  </button>
                 </div>
               </header>
+              <div
+                v-if="call.analysisStatus !== 'completed'"
+                class="call-analysis-notice"
+                :data-status="call.analysisStatus"
+                role="status"
+              >
+                <strong>{{ formatAnalysisStatus(call.analysisStatus) }}</strong>
+                <span>{{ callAnalysisMessage(call.analysisStatus) }}</span>
+              </div>
               <div class="reference-transcript-list">
                 <article
                   v-for="turn in call.call.turns"
@@ -828,7 +1040,17 @@ function delay(milliseconds: number): Promise<void> {
                   :data-selected-evidence="isSelectedEvidenceTurn(turn.id)"
                 >
                   <div class="reference-speaker-icon">
-                    {{ turn.speaker === 'agent' ? 'AI' : turn.speaker === 'customer' ? 'CU' : '?' }}
+                    <template v-if="turn.speaker === 'agent'">AI</template>
+                    <svg
+                      v-else-if="turn.speaker === 'customer'"
+                      class="customer-user-icon"
+                      aria-hidden="true"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle cx="12" cy="8" r="3.25" />
+                      <path d="M5.75 19c.5-3.35 2.58-5.25 6.25-5.25s5.75 1.9 6.25 5.25" />
+                    </svg>
+                    <template v-else>?</template>
                   </div>
                   <div class="reference-turn-copy">
                     <div class="reference-speaker-line">
@@ -913,16 +1135,19 @@ function delay(milliseconds: number): Promise<void> {
             <div class="call-sidebar-content">
               <section class="data-panel reference-rail-card call-summary-reference">
                 <h2>Call summary</h2>
-                <p>{{ call.call.sourceSummary || 'Semantic analysis has not completed.' }}</p>
+                <p v-if="call.analysisStatus !== 'completed'">
+                  {{ callSummaryMessage(call.analysisStatus) }}
+                </p>
+                <p v-else>{{ call.call.sourceSummary || 'No call summary is available.' }}</p>
                 <dl>
                   <div>
                     <dt>Intent</dt>
-                    <dd>{{ call.overview?.intent || 'Run analysis to classify' }}</dd>
+                    <dd>{{ call.overview?.intent || '—' }}</dd>
                   </div>
                   <div>
                     <dt>Outcome</dt>
                     <dd>
-                      {{ call.overview ? formatOverviewValue(call.overview.outcome) : 'Pending' }}
+                      {{ call.overview ? formatOverviewValue(call.overview.outcome) : '—' }}
                     </dd>
                   </div>
                 </dl>
@@ -942,7 +1167,13 @@ function delay(milliseconds: number): Promise<void> {
                   </div>
                   <p>{{ call.overview.sentiment.rationale }}</p>
                 </div>
-                <p v-else>Rerun analysis to generate the call overview.</p>
+                <p v-else>
+                  {{
+                    call.analysisStatus === 'failed'
+                      ? 'Sentiment is unavailable because analysis failed.'
+                      : 'Sentiment will appear after analysis.'
+                  }}
+                </p>
               </section>
 
               <section class="data-panel reference-rail-card checklist-reference">
@@ -973,7 +1204,31 @@ function delay(milliseconds: number): Promise<void> {
                     </button>
                   </article>
                 </div>
-                <div v-else class="panel-empty">No criteria were evaluated for this call.</div>
+                <div v-else-if="call.successCriteria.length" class="checklist">
+                  <article
+                    v-for="criterion in call.successCriteria"
+                    :key="criterion.id"
+                    data-status="not_observable"
+                  >
+                    <span class="check-icon">—</span>
+                    <div>
+                      <strong>{{ criterion.name }}</strong>
+                      <p>{{ criterion.description }}</p>
+                      <small class="criterion-evaluation-state">
+                        {{
+                          call.analysisStatus === 'failed' ? 'Not evaluated' : 'Pending evaluation'
+                        }}
+                      </small>
+                    </div>
+                  </article>
+                </div>
+                <div v-else class="panel-empty">
+                  {{
+                    call.analysisStatus === 'completed'
+                      ? 'No Success Criteria were evaluated.'
+                      : 'No Success Criteria are configured for this Voice Agent.'
+                  }}
+                </div>
               </section>
             </div>
           </aside>

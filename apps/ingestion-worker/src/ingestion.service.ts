@@ -1,8 +1,7 @@
-import type { CallIngestionRequestedEvent, InstallationChangedEvent } from '@copilot/contracts';
+import type { CallIngestionRequestedEvent } from '@copilot/contracts';
 import {
   callActionEvents,
   callTurns,
-  ingestionJobs,
   locations,
   messageOutbox,
   processedMessages,
@@ -158,34 +157,6 @@ export class IngestionService {
     });
   }
 
-  recordLifecycle(event: InstallationChangedEvent): Promise<'processed' | 'duplicate'> {
-    return this.databaseService.client.transaction(async (transaction) => {
-      const [claim] = await transaction
-        .insert(processedMessages)
-        .values({ consumerName: CONSUMER_NAME, messageId: event.messageId })
-        .onConflictDoNothing({
-          target: [processedMessages.consumerName, processedMessages.messageId],
-        })
-        .returning({ id: processedMessages.id });
-      if (!claim) return 'duplicate';
-
-      if (event.type !== 'marketplace.installation.uninstalled') {
-        const locationKey = event.tenant.locationId ?? 'all-granted-locations';
-        await transaction
-          .insert(ingestionJobs)
-          .values({
-            jobKey: `historical:${event.data.installationId}:${locationKey}`,
-            installationId: event.data.installationId,
-            locationId: event.tenant.locationId,
-            kind: 'historical_backfill',
-          })
-          .onConflictDoNothing({ target: ingestionJobs.jobKey });
-      }
-
-      return 'processed';
-    });
-  }
-
   async hasProcessed(messageId: string): Promise<boolean> {
     const [record] = await this.databaseService.client
       .select({ id: processedMessages.id })
@@ -201,24 +172,40 @@ export class IngestionService {
   }
 }
 
-function parseTranscript(transcript: string): Array<{
+export function parseTranscript(transcript: string): Array<{
   speaker: 'agent' | 'customer' | 'unknown';
   text: string;
 }> {
-  return transcript
-    .split(/\r?\n/)
-    .map((raw) => {
-      const match = raw.match(/^\s*([^:]+):\s*(.*)$/);
-      const label = match?.[1]?.trim().toLowerCase() ?? '';
-      const text = (match?.[2] ?? raw).trim();
-      const speaker = /^(bot|agent|assistant|ai)$/.test(label)
-        ? ('agent' as const)
-        : /^(human|customer|caller|user)$/.test(label)
-          ? ('customer' as const)
-          : ('unknown' as const);
-      return { speaker, text };
-    })
-    .filter(({ text }) => text.length > 0);
+  const turns: Array<{ speaker: 'agent' | 'customer' | 'unknown'; text: string }> = [];
+
+  for (const raw of transcript.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+
+    const match = line.match(/^([^:]+):\s*(.*)$/);
+    const label = match?.[1]?.trim().toLowerCase() ?? '';
+    const speaker = /^(bot|agent|assistant|ai)$/.test(label)
+      ? ('agent' as const)
+      : /^(human|customer|caller|user)$/.test(label)
+        ? ('customer' as const)
+        : null;
+
+    if (speaker) {
+      const text = match?.[2]?.trim() ?? '';
+      if (text) turns.push({ speaker, text });
+      continue;
+    }
+
+    if (!match && turns.length > 0) {
+      const previous = turns.at(-1)!;
+      previous.text = `${previous.text}\n${line}`;
+      continue;
+    }
+
+    turns.push({ speaker: 'unknown', text: match?.[2]?.trim() || line });
+  }
+
+  return turns;
 }
 
 function toActionEvent(action: unknown): {

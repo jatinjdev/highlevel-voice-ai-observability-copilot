@@ -1,8 +1,10 @@
 import type { CriterionRecommendationRequestedEvent } from '@copilot/contracts';
 import {
   agentRecommendations,
+  callActionEvents,
   callAnalysisRuns,
   callTurns,
+  criterionResultActionEvidence,
   criterionResultEvidence,
   criterionResults,
   processedMessages,
@@ -18,6 +20,7 @@ import { and, desc, eq, inArray } from 'drizzle-orm';
 import { WorkerDatabaseService } from './database.service';
 import { redactSensitiveText } from './prompt-safety';
 import { RecommendationGenerator, type RecommendationFailure } from './recommendation-generator';
+import { findRecommendationCapability } from './recommendation-capabilities';
 
 const MAX_RECENT_FAILED_CALLS = 20;
 const MAX_QUOTES_PER_FAILURE = 2;
@@ -45,6 +48,7 @@ export class RecommendationService {
       const output = await this.generator.generate({
         criterionDescription: input.criterionDescription,
         currentPrompt: input.currentPrompt,
+        currentConfiguration: input.currentConfiguration,
         failures: input.failures,
       });
 
@@ -57,16 +61,16 @@ export class RecommendationService {
           .where(eq(recommendationGenerationStates.id, state.id))
           .for('update');
         const [currentConfiguration] = await transaction
-          .select({ promptHash: voiceAgentConfigurations.promptHash })
+          .select({ configurationHash: voiceAgentConfigurations.configurationHash })
           .from(voiceAgentConfigurations)
           .where(eq(voiceAgentConfigurations.agentId, event.data.agentId))
           .for('update');
 
-        // A newer request or prompt sync supersedes this model response. Leaving the
+        // A newer request or configuration sync supersedes this model response. Leaving the
         // existing recommendation untouched avoids publishing stale guidance.
         if (
           currentState?.requestId !== event.data.requestId ||
-          currentConfiguration?.promptHash !== input.promptHash
+          currentConfiguration?.configurationHash !== input.configurationHash
         ) {
           return;
         }
@@ -78,21 +82,27 @@ export class RecommendationService {
               eq(agentRecommendations.criterionId, event.data.criterionId),
             ),
           );
-        if (output.promptCoverage === 'missing' && output.recommendation) {
+        if (output.decision === 'change_required' && output.recommendation) {
+          const capability = findRecommendationCapability(output.recommendation.capabilityId);
           await transaction.insert(agentRecommendations).values({
             agentId: event.data.agentId,
             criterionId: event.data.criterionId,
             headline: output.recommendation.headline,
             explanation: output.explanation,
+            capabilityId: capability.id,
+            capabilityLabel: capability.label,
+            uiPath: capability.uiPath,
+            advice: output.recommendation.advice,
+            promptRemovals: output.recommendation.promptRemovals,
             promptAddition: output.recommendation.promptAddition,
-            promptHash: input.promptHash,
+            configurationHash: input.configurationHash,
             sampledFailureCount: input.failures.length,
           });
         }
         await transaction
           .update(recommendationGenerationStates)
           .set({
-            status: output.promptCoverage === 'missing' ? 'completed' : 'not_needed',
+            status: output.decision === 'change_required' ? 'completed' : 'not_needed',
             lastError: null,
             completedAt: new Date(),
             updatedAt: new Date(),
@@ -193,14 +203,16 @@ export class RecommendationService {
   ): Promise<{
     criterionDescription: string;
     currentPrompt: string;
-    promptHash: string;
+    currentConfiguration: Record<string, unknown>;
+    configurationHash: string;
     failures: RecommendationFailure[];
   }> {
     const [context] = await this.databaseService.client
       .select({
         criterionDescription: successCriteria.description,
         currentPrompt: voiceAgentConfigurations.currentPrompt,
-        promptHash: voiceAgentConfigurations.promptHash,
+        currentConfiguration: voiceAgentConfigurations.configuration,
+        configurationHash: voiceAgentConfigurations.configurationHash,
       })
       .from(successCriteria)
       .innerJoin(voiceAgents, eq(voiceAgents.id, successCriteria.agentId))
@@ -218,9 +230,9 @@ export class RecommendationService {
       .limit(1);
     if (!context)
       throw new Error('The criterion or current agent configuration could not be loaded.');
-    if (!context.currentPrompt || !context.promptHash)
+    if (!context.currentPrompt || !context.configurationHash)
       throw new Error(
-        'The current agent prompt is unavailable. Sync the agent before generating recommendations.',
+        'The current agent configuration is unavailable. Sync the agent before generating recommendations.',
       );
 
     const failures = await this.databaseService.client
@@ -265,12 +277,50 @@ export class RecommendationService {
       quotesByResult.set(row.resultId, quotes);
     }
 
+    const actionEvidence = await this.databaseService.client
+      .select({
+        resultId: criterionResultActionEvidence.criterionResultId,
+        ordinal: callActionEvents.ordinal,
+        actionName: callActionEvents.actionName,
+        actionType: callActionEvents.actionType,
+        outcome: callActionEvents.outcome,
+      })
+      .from(criterionResultActionEvidence)
+      .innerJoin(
+        callActionEvents,
+        eq(callActionEvents.id, criterionResultActionEvidence.callActionEventId),
+      )
+      .where(
+        inArray(
+          criterionResultActionEvidence.criterionResultId,
+          failures.map(({ id }) => id),
+        ),
+      )
+      .orderBy(callActionEvents.ordinal);
+    const actionsByResult = new Map<string, string[]>();
+    for (const row of actionEvidence) {
+      const actions = actionsByResult.get(row.resultId) ?? [];
+      actions.push(
+        `Action ${row.ordinal}: ${row.actionName ?? row.actionType ?? 'Unnamed action'}; outcome: ${row.outcome ?? 'unknown'}`,
+      );
+      actionsByResult.set(row.resultId, actions);
+    }
+
     const boundedFailures: RecommendationFailure[] = [];
-    let characters = context.criterionDescription.length + context.currentPrompt.length;
+    let characters =
+      context.criterionDescription.length +
+      context.currentPrompt.length +
+      JSON.stringify(context.currentConfiguration).length;
     for (const failure of failures) {
-      const item = { rationale: failure.rationale, quotes: quotesByResult.get(failure.id) ?? [] };
+      const item = {
+        rationale: failure.rationale,
+        quotes: quotesByResult.get(failure.id) ?? [],
+        actions: actionsByResult.get(failure.id) ?? [],
+      };
       const size =
-        item.rationale.length + item.quotes.reduce((sum, quote) => sum + quote.length, 0);
+        item.rationale.length +
+        item.quotes.reduce((sum, quote) => sum + quote.length, 0) +
+        item.actions.reduce((sum, action) => sum + action.length, 0);
       if (boundedFailures.length && characters + size > MAX_CONTEXT_CHARACTERS) break;
       boundedFailures.push(item);
       characters += size;
@@ -279,7 +329,8 @@ export class RecommendationService {
     return {
       criterionDescription: context.criterionDescription,
       currentPrompt: context.currentPrompt,
-      promptHash: context.promptHash,
+      currentConfiguration: context.currentConfiguration,
+      configurationHash: context.configurationHash,
       failures: boundedFailures,
     };
   }

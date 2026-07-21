@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  agentAnalysisRequestResponseSchema,
+  agentAnalysisRequestSchema,
   agentAnalysisSummarySchema,
-  agentReanalysisRequestSchema,
-  agentReanalysisResponseSchema,
+  agentDiscoveryResponseSchema,
   callAnalysisDetailSchema,
   normalizeCriterionName,
-  pipelineSummarySchema,
+  recommendationBatchResponseSchema,
   recommendationSchema,
 } from './index';
 
@@ -26,6 +27,7 @@ describe('callAnalysisDetailSchema', () => {
         turns: [],
         actionEvents: [],
       },
+      analysisStatus: 'queued',
       analysis: null,
       overview: {
         intent: 'Order a cake',
@@ -35,6 +37,7 @@ describe('callAnalysisDetailSchema', () => {
           rationale: 'The customer expressed frustration about the damaged order.',
         },
       },
+      successCriteria: [],
       criterionResults: [],
     });
 
@@ -52,18 +55,60 @@ describe('normalizeCriterionName', () => {
 });
 
 describe('recommendationSchema', () => {
-  it('requires paste-ready agent guidance tied to one criterion', () => {
+  it('accepts an exact prompt replacement tied to one criterion', () => {
     const result = recommendationSchema.safeParse({
       id: 'b15cbd24-88bb-4fc4-b581-9ea5e86bd870',
       criterionId: 'c11e6d46-8aa8-45ad-a205-a2c7869c33b1',
       criterionName: 'Confirm order details',
       headline: 'Confirm details before completion',
       explanation: 'Recent failed calls ended without confirming the final order.',
+      capabilityId: 'prompt.core-instructions',
+      capabilityLabel: 'Prompt',
+      uiPath: 'Build > Agent prompt',
+      advice: 'Replace the conflicting completion instruction with the text below.',
+      promptRemovals: ['Complete the order immediately.'],
       promptAddition:
         'Before completing an order, repeat the final items and ask the caller to confirm.',
       affectedCallCount: 5,
       sampledFailureCount: 5,
       generatedAt: '2026-07-20T00:00:00.000Z',
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts manual HighLevel configuration advice without a prompt patch', () => {
+    expect(
+      recommendationSchema.safeParse({
+        id: 'b15cbd24-88bb-4fc4-b581-9ea5e86bd870',
+        criterionId: 'c11e6d46-8aa8-45ad-a205-a2c7869c33b1',
+        criterionName: 'Book requested appointments',
+        headline: 'Configure appointment booking',
+        explanation: 'Recent calls could not complete a requested booking.',
+        capabilityId: 'action.appointment-booking',
+        capabilityLabel: 'Actions',
+        uiPath: 'Build > Actions > During the Call > Book Appointment',
+        advice: 'Connect the eligible calendar and configure a fallback for unavailable slots.',
+        promptRemovals: [],
+        promptAddition: null,
+        affectedCallCount: 3,
+        sampledFailureCount: 3,
+        generatedAt: '2026-07-20T00:00:00.000Z',
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe('recommendationBatchResponseSchema', () => {
+  it('describes one agent-level request that queues a job per failed criterion', () => {
+    const result = recommendationBatchResponseSchema.safeParse({
+      batchId: '11990c53-e3b1-44fb-98f4-6e816cf74d71',
+      criterionIds: [
+        'c11e6d46-8aa8-45ad-a205-a2c7869c33b1',
+        'e06954c8-e9d3-46ae-948b-c5782204d75c',
+      ],
+      queuedCriterionCount: 2,
+      status: 'queued',
     });
 
     expect(result.success).toBe(true);
@@ -83,36 +128,29 @@ describe('agentAnalysisSummarySchema', () => {
   });
 });
 
-describe('pipelineSummarySchema', () => {
-  it('accepts an explicitly labelled deterministic-analysis pipeline', () => {
-    const result = pipelineSummarySchema.safeParse({
-      agentsMonitored: 1,
-      callsIngested: 1,
-      analysesCompleted: 1,
-      analysisMode: 'deterministic',
-      lastSyncedAt: '2026-07-14T00:00:00.000Z',
-      calls: [],
-    });
+describe('agentDiscoveryResponseSchema', () => {
+  it('reports how many HighLevel agents were discovered', () => {
+    const result = agentDiscoveryResponseSchema.safeParse({ discoveredAgentCount: 2 });
 
     expect(result.success).toBe(true);
   });
 });
 
-describe('agent reanalysis contracts', () => {
+describe('agent analysis contracts', () => {
   it.each(['24h', '7d'])('accepts the supported %s window', (window) => {
-    expect(agentReanalysisRequestSchema.safeParse({ window }).success).toBe(true);
+    expect(agentAnalysisRequestSchema.safeParse({ window }).success).toBe(true);
   });
 
   it('rejects unsupported windows', () => {
-    expect(agentReanalysisRequestSchema.safeParse({ window: '30d' }).success).toBe(false);
+    expect(agentAnalysisRequestSchema.safeParse({ window: '30d' }).success).toBe(false);
   });
 
   it('accepts an empty-window response', () => {
     expect(
-      agentReanalysisResponseSchema.safeParse({
-        batchRequestId: 'a6c4f236-d0bc-4af2-ae76-557b24eb9514',
+      agentAnalysisRequestResponseSchema.safeParse({
+        requestId: 'a6c4f236-d0bc-4af2-ae76-557b24eb9514',
         window: '24h',
-        matchedCallCount: 0,
+        discoveredCallCount: 0,
         queuedCallCount: 0,
         status: 'no_calls',
       }).success,

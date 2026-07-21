@@ -41,28 +41,6 @@ export const locations = pgTable(
   ],
 );
 
-export const marketplaceAppInstallations = pgTable(
-  'marketplace_app_installations',
-  {
-    id: uuid('id').defaultRandom().primaryKey(),
-    installationKey: varchar('installation_key', { length: 196 }).notNull(),
-    appId: varchar('app_id', { length: 64 }).notNull(),
-    subjectType: varchar('subject_type', { length: 24 }).notNull(),
-    subjectExternalId: varchar('subject_external_id', { length: 64 }).notNull(),
-    companyId: uuid('company_id').references(() => companies.id, { onDelete: 'restrict' }),
-    installerUserId: varchar('installer_user_id', { length: 64 }),
-    status: varchar('status', { length: 24 }).default('provisional').notNull(),
-    installedAt: timestamp('installed_at', { withTimezone: true }),
-    uninstalledAt: timestamp('uninstalled_at', { withTimezone: true }),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex('marketplace_app_installations_key_idx').on(table.installationKey),
-    index('marketplace_app_installations_company_idx').on(table.companyId),
-  ],
-);
-
 export const marketplaceUsers = pgTable(
   'marketplace_users',
   {
@@ -96,30 +74,6 @@ export const appSessions = pgTable(
   (table) => [
     uniqueIndex('app_sessions_token_hash_idx').on(table.tokenHash),
     index('app_sessions_user_idx').on(table.userId, table.expiresAt),
-  ],
-);
-
-export const installationLocationGrants = pgTable(
-  'installation_location_grants',
-  {
-    id: uuid('id').defaultRandom().primaryKey(),
-    installationId: uuid('installation_id')
-      .notNull()
-      .references(() => marketplaceAppInstallations.id, { onDelete: 'cascade' }),
-    locationId: uuid('location_id')
-      .notNull()
-      .references(() => locations.id, { onDelete: 'restrict' }),
-    status: varchar('status', { length: 24 }).default('active').notNull(),
-    grantedAt: timestamp('granted_at', { withTimezone: true }).defaultNow().notNull(),
-    revokedAt: timestamp('revoked_at', { withTimezone: true }),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex('installation_location_grants_installation_location_idx').on(
-      table.installationId,
-      table.locationId,
-    ),
-    index('installation_location_grants_location_idx').on(table.locationId),
   ],
 );
 
@@ -193,28 +147,6 @@ export const processedMessages = pgTable(
   ],
 );
 
-export const ingestionJobs = pgTable(
-  'ingestion_jobs',
-  {
-    id: uuid('id').defaultRandom().primaryKey(),
-    jobKey: varchar('job_key', { length: 240 }).notNull(),
-    installationId: uuid('installation_id')
-      .notNull()
-      .references(() => marketplaceAppInstallations.id, { onDelete: 'cascade' }),
-    locationId: uuid('location_id').references(() => locations.id, { onDelete: 'restrict' }),
-    kind: varchar('kind', { length: 32 }).notNull(),
-    status: varchar('status', { length: 24 }).default('pending').notNull(),
-    requestedAt: timestamp('requested_at', { withTimezone: true }).defaultNow().notNull(),
-    startedAt: timestamp('started_at', { withTimezone: true }),
-    completedAt: timestamp('completed_at', { withTimezone: true }),
-    lastError: text('last_error'),
-  },
-  (table) => [
-    uniqueIndex('ingestion_jobs_key_idx').on(table.jobKey),
-    index('ingestion_jobs_pending_idx').on(table.status, table.requestedAt),
-  ],
-);
-
 export const voiceAgents = pgTable(
   'voice_agents',
   {
@@ -224,6 +156,7 @@ export const voiceAgents = pgTable(
       .references(() => locations.id, { onDelete: 'restrict' }),
     highLevelAgentId: varchar('highlevel_agent_id', { length: 64 }).notNull(),
     name: text('name').notNull(),
+    source: varchar('source', { length: 24 }).default('highlevel').notNull(),
     lifecycleState: varchar('lifecycle_state', { length: 24 }).default('active').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
@@ -244,6 +177,7 @@ export const voiceAgentConfigurations = pgTable(
     currentPrompt: text('current_prompt'),
     promptHash: varchar('prompt_hash', { length: 64 }),
     configuration: jsonb('configuration').$type<Record<string, unknown>>().default({}).notNull(),
+    configurationHash: varchar('configuration_hash', { length: 64 }),
     syncStatus: varchar('sync_status', { length: 24 }).default('unknown').notNull(),
     syncedAt: timestamp('synced_at', { withTimezone: true }),
     criteriaInitializedAt: timestamp('criteria_initialized_at', { withTimezone: true }),
@@ -438,55 +372,6 @@ export const criterionResultActionEvidence = pgTable(
   (table) => [primaryKey({ columns: [table.criterionResultId, table.callActionEventId] })],
 );
 
-export const analysisBatches = pgTable(
-  'analysis_batches',
-  {
-    id: uuid('id').defaultRandom().primaryKey(),
-    agentId: uuid('agent_id')
-      .notNull()
-      .references(() => voiceAgents.id, { onDelete: 'cascade' }),
-    locationId: uuid('location_id')
-      .notNull()
-      .references(() => locations.id, { onDelete: 'cascade' }),
-    window: varchar('window', { length: 16 }).notNull(),
-    status: varchar('status', { length: 24 }).default('queued').notNull(),
-    totalCount: integer('total_count').default(0).notNull(),
-    completedCount: integer('completed_count').default(0).notNull(),
-    failedCount: integer('failed_count').default(0).notNull(),
-    requestedAt: timestamp('requested_at', { withTimezone: true }).defaultNow().notNull(),
-    completedAt: timestamp('completed_at', { withTimezone: true }),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => [index('analysis_batches_agent_requested_idx').on(table.agentId, table.requestedAt)],
-);
-
-export const analysisBatchItems = pgTable(
-  'analysis_batch_items',
-  {
-    id: uuid('id').defaultRandom().primaryKey(),
-    batchId: uuid('batch_id')
-      .notNull()
-      .references(() => analysisBatches.id, { onDelete: 'cascade' }),
-    callId: uuid('call_id')
-      .notNull()
-      .references(() => voiceCalls.id, { onDelete: 'cascade' }),
-    requestKey: varchar('request_key', { length: 160 }).notNull(),
-    status: varchar('status', { length: 24 }).default('queued').notNull(),
-    analysisRunId: uuid('analysis_run_id').references(() => callAnalysisRuns.id, {
-      onDelete: 'set null',
-    }),
-    lastError: text('last_error'),
-    completedAt: timestamp('completed_at', { withTimezone: true }),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex('analysis_batch_items_batch_call_idx').on(table.batchId, table.callId),
-    uniqueIndex('analysis_batch_items_request_key_idx').on(table.requestKey),
-    index('analysis_batch_items_batch_status_idx').on(table.batchId, table.status),
-  ],
-);
-
 export const agentRecommendations = pgTable(
   'agent_recommendations',
   {
@@ -499,8 +384,13 @@ export const agentRecommendations = pgTable(
       .references(() => successCriteria.id, { onDelete: 'cascade' }),
     headline: text('headline').notNull(),
     explanation: text('explanation').notNull(),
-    promptAddition: text('prompt_addition').notNull(),
-    promptHash: varchar('prompt_hash', { length: 64 }).notNull(),
+    capabilityId: varchar('capability_id', { length: 96 }).notNull(),
+    capabilityLabel: varchar('capability_label', { length: 48 }).notNull(),
+    uiPath: text('ui_path').notNull(),
+    advice: text('advice').notNull(),
+    promptRemovals: text('prompt_removals').array().default([]).notNull(),
+    promptAddition: text('prompt_addition'),
+    configurationHash: varchar('configuration_hash', { length: 64 }).notNull(),
     sampledFailureCount: integer('sampled_failure_count').notNull(),
     generatedAt: timestamp('generated_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
@@ -578,34 +468,9 @@ export const callAnalysisRunsRelations = relations(callAnalysisRuns, ({ one, man
 }));
 export const companiesRelations = relations(companies, ({ many }) => ({
   locations: many(locations),
-  installations: many(marketplaceAppInstallations),
 }));
 export const locationsRelations = relations(locations, ({ one, many }) => ({
   company: one(companies, { fields: [locations.companyId], references: [companies.id] }),
-  installationGrants: many(installationLocationGrants),
   voiceAgents: many(voiceAgents),
   voiceCalls: many(voiceCalls),
 }));
-export const marketplaceAppInstallationsRelations = relations(
-  marketplaceAppInstallations,
-  ({ one, many }) => ({
-    company: one(companies, {
-      fields: [marketplaceAppInstallations.companyId],
-      references: [companies.id],
-    }),
-    locationGrants: many(installationLocationGrants),
-  }),
-);
-export const installationLocationGrantsRelations = relations(
-  installationLocationGrants,
-  ({ one }) => ({
-    installation: one(marketplaceAppInstallations, {
-      fields: [installationLocationGrants.installationId],
-      references: [marketplaceAppInstallations.id],
-    }),
-    location: one(locations, {
-      fields: [installationLocationGrants.locationId],
-      references: [locations.id],
-    }),
-  }),
-);
