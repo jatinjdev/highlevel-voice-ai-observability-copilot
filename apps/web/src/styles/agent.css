@@ -1,0 +1,364 @@
+/* Agent analysis is a bounded workspace; each evidence surface scrolls independently. */
+.app-shell[data-view='agent'] {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+.app-shell[data-view='agent'] .page-shell {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  padding: 18px 0;
+}
+.app-shell[data-view='agent'] .breadcrumbs {
+  min-width: 0;
+  flex: 0 0 auto;
+  margin-bottom: 9px;
+}
+.app-shell[data-view='agent'] .breadcrumbs strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-shell[data-view='agent'] .agent-heading {
+  min-height: 0;
+  flex: 0 0 auto;
+  padding-bottom: 12px;
+}
+.app-shell[data-view='agent'] .agent-heading h1 {
+  font-size: clamp(23px, 2.4vw, 30px);
+}
+.app-shell[data-view='agent'] .summary-strip {
+  min-height: 0;
+  flex: 0 0 auto;
+  margin-top: 12px;
+}
+.app-shell[data-view='agent'] .summary-strip article {
+  min-height: 60px;
+  gap: 4px;
+  padding: 8px 14px;
+}
+.app-shell[data-view='agent'] .summary-strip strong {
+  font-size: 18px;
+}
+.app-shell[data-view='agent'] .agent-analysis-layout {
+  grid-template-rows: minmax(0, 1fr) minmax(180px, 30dvh);
+  min-height: 0;
+  flex: 1;
+  align-items: stretch;
+  gap: 12px;
+  margin-top: 12px;
+}
+.app-shell[data-view='agent'] .agent-review-grid {
+  height: 100%;
+  min-height: 0;
+  gap: 12px;
+}
+.app-shell[data-view='agent'] .calls-panel,
+.app-shell[data-view='agent'] .criteria-panel,
+.app-shell[data-view='agent'] .agent-recommendations-panel {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+.app-shell[data-view='agent'] .panel-header,
+.app-shell[data-view='agent'] .criterion-composer {
+  flex: 0 0 auto;
+}
+.app-shell[data-view='agent'] .panel-header {
+  min-height: 44px;
+  padding: 8px 13px;
+}
+.app-shell[data-view='agent'] .calls-scroll,
+.app-shell[data-view='agent'] .criterion-list {
+  min-height: 0;
+  flex: 1;
+  align-content: start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: #aaa5de transparent;
+  scrollbar-width: thin;
+}
+.app-shell[data-view='agent'] .calls-scroll {
+  max-height: none;
+  overflow: auto;
+}
+.app-shell[data-view='agent'] .calls-scroll::-webkit-scrollbar,
+.app-shell[data-view='agent'] .criterion-list::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.app-shell[data-view='agent'] .calls-scroll::-webkit-scrollbar-thumb,
+.app-shell[data-view='agent'] .criterion-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #aaa5de;
+}
+.app-shell[data-view='agent'] .data-table th {
+  height: 38px;
+}
+.app-shell[data-view='agent'] .data-table td {
+  height: 56px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.call-log-header > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  color: var(--subtle);
+  font:
+    500 9px/1 Geist,
+    sans-serif;
+}
+.active-criterion-filter {
+  display: flex;
+  max-width: min(460px, calc(100% - 64px));
+  min-width: 0;
+  min-height: 26px;
+  align-items: center;
+  overflow: hidden;
+  padding: 0 11px;
+  border: 1px solid #c9c4fa;
+  border-radius: 999px;
+  color: var(--primary);
+  background: var(--primary-soft);
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.active-criterion-filter-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.active-criterion-filter-dismiss {
+  display: grid;
+  width: 0;
+  flex: 0 0 auto;
+  place-items: center;
+  overflow: hidden;
+  margin-left: 0;
+  font-size: 13px;
+  opacity: 0;
+  transform: translateX(4px);
+  transition:
+    width 120ms ease,
+    margin-left 120ms ease,
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+.active-criterion-filter:hover .active-criterion-filter-dismiss,
+.active-criterion-filter:focus-visible .active-criterion-filter-dismiss {
+  width: 14px;
+  margin-left: 7px;
+  opacity: 1;
+  transform: translateX(0);
+}
+.criteria-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.criteria-header-actions > span {
+  color: var(--subtle);
+  font:
+    500 9px/1 Geist,
+    sans-serif;
+}
+.criterion-add-toggle {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid #c9c4fa;
+  border-radius: 6px;
+  color: var(--primary);
+  background: #fff;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 700;
+}
+.criterion-add-toggle:hover,
+.criterion-add-toggle[aria-expanded='true'] {
+  background: var(--primary-soft);
+}
+.app-shell[data-view='agent'] .criterion-composer {
+  grid-template-columns: 1fr;
+  gap: 10px;
+  padding: 13px 14px;
+}
+.criterion-composer label {
+  display: grid;
+  gap: 7px;
+}
+.criterion-composer label > span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 600;
+}
+.app-shell[data-view='agent'] .criterion-composer textarea {
+  width: 100%;
+  min-height: 58px;
+  resize: none;
+  padding: 9px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  outline: none;
+  color: var(--ink);
+  background: #fff;
+  font-size: 10px;
+  line-height: 1.45;
+}
+.app-shell[data-view='agent'] .criterion-composer textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgb(53 37 205 / 9%);
+}
+.criterion-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.app-shell[data-view='agent'] .criterion-list {
+  grid-auto-rows: max-content;
+  gap: 8px;
+  padding: 10px;
+  background: #f7f8fd;
+}
+.app-shell[data-view='agent'] .criterion-list article {
+  position: relative;
+  display: flex;
+  min-height: 104px;
+  align-items: stretch;
+  gap: 6px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease;
+}
+.app-shell[data-view='agent'] .criterion-list article:last-child {
+  border-bottom: 1px solid var(--line);
+}
+.app-shell[data-view='agent'] .criterion-list article:hover {
+  border-color: #c9c4fa;
+}
+.app-shell[data-view='agent'] .criterion-list article[data-selected='true'] {
+  background: #f2f0ff;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgb(53 37 205 / 8%);
+}
+.criterion-filter-button {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  padding: 14px 42px 42px 14px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.criterion-filter-button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -3px;
+}
+.criterion-title-row,
+.criterion-card-footer {
+  display: flex;
+  align-items: center;
+}
+.criterion-title-row {
+  justify-content: space-between;
+  gap: 10px;
+}
+.criterion-title-row strong {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.criterion-filter-button > p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.criterion-failure-count {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: #edf0f5;
+  font:
+    600 8px/1 Geist,
+    sans-serif;
+}
+.criterion-failure-count[data-active='true'] {
+  color: var(--red);
+  background: var(--red-soft);
+}
+.criterion-card-footer {
+  position: absolute;
+  right: 9px;
+  bottom: 9px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  color: var(--subtle);
+  font:
+    400 8px/1.2 Geist,
+    sans-serif;
+}
+.criterion-delete-button {
+  position: absolute;
+  z-index: 2;
+  top: 9px;
+  right: 9px;
+  display: grid;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  outline: none;
+  color: var(--subtle);
+  background: #fff;
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1;
+  opacity: 0;
+  transform: scale(0.92);
+  transition:
+    opacity 100ms ease,
+    transform 100ms ease,
+    color 100ms ease,
+    background 100ms ease;
+}
+.criterion-list article:hover .criterion-delete-button,
+.criterion-list article:focus-within .criterion-delete-button {
+  opacity: 1;
+  transform: scale(1);
+}
+.criterion-delete-button:hover,
+.criterion-delete-button:focus-visible {
+  border-color: #f2bbb7;
+  color: var(--red);
+  background: var(--red-soft);
+}
+.criterion-delete-button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}

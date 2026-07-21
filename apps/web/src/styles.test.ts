@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const styles = readFileSync('src/styles.css', 'utf8');
+const styles = ['base.css', 'recommendations.css', 'shared-workspace.css', 'agent.css', 'call.css']
+  .map((file) => readFileSync(`src/styles/${file}`, 'utf8'))
+  .join('\n');
 
 describe('established observability layout', () => {
   it('keeps the agent review and recommendation regions in the canonical fixed workspace', () => {

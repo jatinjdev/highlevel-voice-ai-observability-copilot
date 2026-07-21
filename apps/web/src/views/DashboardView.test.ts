@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import DashboardView from './views/DashboardView.vue';
+import DashboardView from './DashboardView.vue';
 
 const api = vi.hoisted(() => ({
   analyzeAgent: vi.fn(),
@@ -19,7 +19,7 @@ const api = vi.hoisted(() => ({
   generateRecommendations: vi.fn(),
   deleteRecommendation: vi.fn(),
 }));
-vi.mock('./lib/api', () => api);
+vi.mock('../lib/api', () => api);
 
 const emptyRecommendationCall = {
   call: {
